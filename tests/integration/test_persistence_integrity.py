@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import sqlite3
 import subprocess
 import sys
 import tarfile
@@ -210,6 +211,65 @@ def test_restore_first_publish_rename_failure_preserves_live_destination(
         backup.restore_backup(archive_path, destination)
     assert (destination / "keep.txt").read_text(encoding="utf-8") == "untouched"
     assert list(tmp_path.glob(".live.previous-*")) == []
+
+
+def test_runtime_backup_is_a_consistent_sqlite_snapshot_with_mounted_configs(
+    tmp_path: Path,
+) -> None:
+    backup = _backup_module()
+    database = tmp_path / "state" / "audit.sqlite3"
+    database.parent.mkdir()
+    connection = sqlite3.connect(database)
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("CREATE TABLE audit (id INTEGER PRIMARY KEY, value TEXT)")
+    connection.execute("INSERT INTO audit(value) VALUES ('before-backup')")
+    connection.commit()
+    policy = tmp_path / "policy.yaml"
+    cameras = tmp_path / "cameras.yaml"
+    policy.write_text("policy:\n  mode: shadow\n", encoding="utf-8")
+    cameras.write_text("cameras: []\n", encoding="utf-8")
+    archive = tmp_path / "runtime.tar.gz"
+    backup.create_runtime_backup(database, policy, cameras, archive)
+    connection.execute("INSERT INTO audit(value) VALUES ('after-backup')")
+    connection.commit()
+    connection.close()
+
+    restored = tmp_path / "restored"
+    backup.restore_backup(archive, restored)
+    restored_db = sqlite3.connect(restored / "state" / "audit.sqlite3")
+    assert restored_db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    assert restored_db.execute("SELECT value FROM audit").fetchall() == [("before-backup",)]
+    restored_db.close()
+    assert (restored / "config" / "policy.yaml").read_text(encoding="utf-8").startswith("policy:")
+    assert (restored / "config" / "cameras.yaml").read_text(encoding="utf-8") == "cameras: []\n"
+
+
+def test_runtime_restore_replaces_database_atomically_after_integrity_check(
+    tmp_path: Path,
+) -> None:
+    backup = _backup_module()
+    source = tmp_path / "source.sqlite3"
+    connection = sqlite3.connect(source)
+    connection.execute("CREATE TABLE audit (value TEXT)")
+    connection.execute("INSERT INTO audit VALUES ('restored')")
+    connection.commit()
+    connection.close()
+    policy = tmp_path / "policy.yaml"
+    cameras = tmp_path / "cameras.yaml"
+    policy.write_text("policy: {}\n", encoding="utf-8")
+    cameras.write_text("cameras: []\n", encoding="utf-8")
+    archive = tmp_path / "runtime.tar.gz"
+    backup.create_runtime_backup(source, policy, cameras, archive)
+    live = tmp_path / "volume" / "audit.sqlite3"
+    live.parent.mkdir()
+    live.write_bytes(b"not a database")
+
+    result = backup.restore_runtime(archive, live)
+    assert result["integrity_check"] == "ok"
+    restored = sqlite3.connect(live)
+    assert restored.execute("SELECT value FROM audit").fetchone() == ("restored",)
+    restored.close()
+    assert not list(live.parent.glob(".smoke-runtime-restore-*"))
 
 
 def test_cpu_qualification_check_is_read_only(

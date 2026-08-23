@@ -8,13 +8,23 @@ by default and DNS names require an exact configured internal allowlist entry.
 
 from __future__ import annotations
 
+import http.client
 import ipaddress
 import json
 import re
 import socket
 from datetime import UTC, datetime
+from typing import Any
+from urllib.error import URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import (
+    HTTPHandler,
+    HTTPRedirectHandler,
+    HTTPSHandler,
+    ProxyHandler,
+    Request,
+    build_opener,
+)
 
 from ...contracts import AudioCommand
 from ...domain.policy.audio import DEFAULT_MESSAGE_CATALOG
@@ -53,6 +63,107 @@ def _normalize_host(host: str) -> str:
     return normalized
 
 
+def _safe_address(value: str) -> bool:
+    address = ipaddress.ip_address(value)
+    return address.is_private or address.is_loopback
+
+
+def _resolve_safe_addresses(host: str, port: int) -> tuple[str, ...]:
+    """Resolve immediately before I/O and reject public/mixed destinations."""
+
+    try:
+        records = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except (OSError, ValueError) as exc:
+        raise ValueError("audio endpoint host cannot be resolved") from exc
+    addresses: list[str] = []
+    for record in records:
+        raw = str(record[4][0])
+        try:
+            safe = _safe_address(raw)
+        except ValueError:
+            safe = False
+        if not safe:
+            raise ValueError("audio endpoint resolved to a public or unsafe address")
+        if raw not in addresses:
+            addresses.append(raw)
+    if not addresses:
+        raise ValueError("audio endpoint has no stream address")
+    return tuple(addresses)
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, *_args: object, **_kwargs: object) -> None:
+        raise URLError("audio endpoint redirects are disabled")
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, host: str, address: str, **kwargs: Any) -> None:
+        super().__init__(host, **kwargs)
+        self._pinned_address = address
+        self._tp_source_address = kwargs.get("source_address")
+        self._tp_tunnel_host = getattr(self, "_tunnel_host", None)
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection(
+            (self._pinned_address, self.port), self.timeout, self._tp_source_address
+        )
+        if self._tp_tunnel_host:
+            tunnel = getattr(self, "_tunnel")  # noqa: B009
+            tunnel()
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, host: str, address: str, **kwargs: Any) -> None:
+        super().__init__(host, **kwargs)
+        self._pinned_address = address
+        self._tp_source_address = kwargs.get("source_address")
+        self._tp_tunnel_host = getattr(self, "_tunnel_host", None)
+        self._tp_context = getattr(self, "_context")  # noqa: B009
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection(
+            (self._pinned_address, self.port), self.timeout, self._tp_source_address
+        )
+        if self._tp_tunnel_host:
+            tunnel = getattr(self, "_tunnel")  # noqa: B009
+            tunnel()
+        self.sock = self._tp_context.wrap_socket(self.sock, server_hostname=self.host)
+
+
+class _PinnedHTTPHandler(HTTPHandler):
+    def __init__(self, address: str) -> None:
+        super().__init__()
+        self.address = address
+
+    def http_open(self, request: Request):  # type: ignore[no-untyped-def]
+        return self.do_open(
+            lambda host, **kwargs: _PinnedHTTPConnection(host, self.address, **kwargs), request
+        )
+
+
+class _PinnedHTTPSHandler(HTTPSHandler):
+    def __init__(self, address: str) -> None:
+        super().__init__()
+        self.address = address
+
+    def https_open(self, request: Request):  # type: ignore[no-untyped-def]
+        return self.do_open(
+            lambda host, **kwargs: _PinnedHTTPSConnection(host, self.address, **kwargs), request
+        )
+
+
+def urlopen(request: Request, *, timeout: float) -> Any:
+    """Open one request without proxying, redirects, or a second DNS lookup."""
+
+    address = getattr(request, "_tp_pinned_address", None)
+    if not isinstance(address, str):
+        raise ValueError("audio request is missing a pinned destination")
+    opener = build_opener(
+        ProxyHandler({}), _NoRedirect(), _PinnedHTTPHandler(address), _PinnedHTTPSHandler(address)
+    )
+    return opener.open(request, timeout=timeout)
+
+
 class HttpAudioController:
     def __init__(
         self,
@@ -79,6 +190,12 @@ class HttpAudioController:
         # for internal DNS names (avoiding suffix or wildcard matches).
         if not _is_local_host(host) and host not in configured_hosts:
             raise ValueError("audio endpoint host is not in the internal allowlist")
+        try:
+            literal = ipaddress.ip_address(host)
+        except ValueError:
+            literal = None
+        if literal is not None and not _safe_address(host):
+            raise ValueError("audio endpoint host is not internal")
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self.endpoint = endpoint
@@ -115,6 +232,14 @@ class HttpAudioController:
             },
         )
         try:
+            parsed = urlparse(self.endpoint)
+            addresses = _resolve_safe_addresses(
+                parsed.hostname or "",
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+            )
+            # The custom opener connects to this exact address while retaining
+            # the configured hostname for Host and TLS SNI.
+            request._tp_pinned_address = addresses[0]  # type: ignore[attr-defined]
             with urlopen(request, timeout=self.timeout_seconds) as response:
                 body = json.loads(response.read().decode("utf-8"))
             receipt = AudioPlaybackReceipt.model_validate(body)

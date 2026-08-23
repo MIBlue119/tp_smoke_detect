@@ -9,6 +9,8 @@ __pycache__/
 *.py[cod]
 dist/
 build/
+native/deepstream/build-debug/
+native/deepstream/build-release/
 .build/
 *.egg-info/
 .env

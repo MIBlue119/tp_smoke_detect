@@ -13,6 +13,7 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 from uuid import NAMESPACE_URL, uuid5
@@ -80,6 +81,7 @@ class ReplayManifest:
     camera_id: str
     camera_config_revision: str
     frames: tuple[ReplayFrame, ...]
+    recording_id: str = "manifest"
     source_fps: float = 30.0
     capture_start_ts_ns: int = 0
 
@@ -89,6 +91,16 @@ class ReplayManifest:
         revision = str(value.get("camera_config_revision", f"{camera_id}-r1"))
         source_fps = _positive_number(value.get("source_fps", 30.0), "source_fps")
         start_ns = _non_negative_int(value.get("capture_start_ts_ns", 0), "capture_start_ts_ns")
+        explicit_recording_id = value.get("recording_id", value.get("manifest_id"))
+        if explicit_recording_id is None:
+            explicit_recording_id = value.get("source_id")
+        if explicit_recording_id is None:
+            # Keep legacy manifests deterministic while separating distinct
+            # zero-based recordings. Explicit recording_id is preferred when
+            # a recorder can provide a durable source identity.
+            encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+            explicit_recording_id = f"manifest-{sha256(encoded.encode()).hexdigest()[:24]}"
+        recording_id = _required_text({"recording_id": explicit_recording_id}, "recording_id")
         raw_frames = value.get("frames")
         if not isinstance(raw_frames, Sequence) or isinstance(raw_frames, (str, bytes, bytearray)):
             raise ValueError("manifest frames must be a list")
@@ -134,7 +146,7 @@ class ReplayManifest:
                     observations=observations,
                 )
             )
-        return cls(camera_id, revision, tuple(frames), source_fps, start_ns)
+        return cls(camera_id, revision, tuple(frames), recording_id, source_fps, start_ns)
 
     @classmethod
     def from_json(cls, payload: bytes | str) -> ReplayManifest:
@@ -289,10 +301,13 @@ class ReplayWorker:
         return CandidateEnvelope(
             event_id=uuid5(
                 NAMESPACE_URL,
-                f"tp-smoke-detect/replay/{manifest.camera_id}/{frame.track_id}/{capture_ts_ns}",
+                "tp-smoke-detect/replay/"
+                f"{manifest.camera_id}/{manifest.recording_id}/{frame.track_id}/"
+                f"{frame.frame_id}/{frame.artifact_id}/{capture_ts_ns}",
             ),
             correlation_id=uuid5(
-                NAMESPACE_URL, f"tp-smoke-detect/replay/{manifest.camera_id}/{frame.track_id}"
+                NAMESPACE_URL,
+                f"tp-smoke-detect/replay/{manifest.camera_id}/{manifest.recording_id}/{frame.track_id}",
             ),
             producer="tp-smoke-detect.replay",
             occurred_at=occurred,

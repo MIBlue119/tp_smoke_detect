@@ -68,17 +68,40 @@ cooldown-limited, over cap, or suspended.
 
 ## Backup and restore
 
-The helper creates a path-safe, media-free archive. It retains state,
-configuration, and model references but excludes raw media and event clips:
+The host-side command below is the executable deployment backup path. Run it
+from the repository checkout with the Compose service healthy; it does not
+require `uv` in the runtime image:
 
-    uv run python scripts/backup_restore.py backup \
-      --source /var/lib/smoke-detect \
+    python3 scripts/backup_restore.py backup-deployment \
+      --compose-file deploy/compose.yaml \
+      --service smoke-detect \
       --output /secure/backup/smoke-detect-<UTC>.tar.gz
-    uv run python scripts/backup_restore.py restore \
-      --archive /secure/backup/smoke-detect-<UTC>.tar.gz \
-      --destination /var/lib/smoke-detect-restore
 
-Production PostgreSQL dumps are owned by the database administrator and must
-be supplied to the restore drill separately. Verify the manifest hash and
-confirm that no archive member is media, a symlink, absolute, or traversing
-before replacing state. Run the CPU/e2e and health checks after restore.
+The command executes the checked-in helper as `python` inside the service. It
+uses SQLite's online backup API against the database in the `smoke_state`
+Compose named volume, and includes the two authoritative read-only mounts
+(`/etc/smoke-detect/policy.yaml` and `cameras.yaml`). The archive is published
+with an atomic host-side rename. Raw media and event clips remain excluded.
+
+For a restore drill, first verify into a fresh host staging directory:
+
+    python3 scripts/backup_restore.py restore \
+      --archive /secure/backup/smoke-detect-<UTC>.tar.gz \
+      --destination /secure/restore/smoke-detect
+
+Review `state/audit.sqlite3` with `PRAGMA integrity_check` and review the
+restored `config/` files before applying them to the host paths mounted by
+Compose. Stop the API before replacing the named-volume database, then stream
+the verified archive through the runtime helper (again, no `uv` in the image):
+
+    docker compose -f deploy/compose.yaml stop smoke-detect
+    docker compose -f deploy/compose.yaml run --rm --no-deps -T \
+      --entrypoint python smoke-detect \
+      /app/scripts/backup_restore.py restore-runtime \
+      --archive - --database /var/lib/smoke-detect/state/audit.sqlite3 \
+      < /secure/backup/smoke-detect-<UTC>.tar.gz
+
+The runtime restore uses an in-volume staging directory, checks SQLite
+integrity, and atomically replaces only the database. Apply reviewed policy
+and camera files on the host, restart Compose, and run the CPU/e2e and health
+checks. Production PostgreSQL dumps remain a separate DBA-owned procedure.

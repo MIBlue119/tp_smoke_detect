@@ -31,6 +31,15 @@ class _RaisingAudioController:
         raise RuntimeError("controller unavailable")
 
 
+class _DuplicateAudioController:
+    def send(self, command: AudioCommand) -> AudioPlaybackReceipt:
+        return AudioPlaybackReceipt(
+            command_id=str(command.command_id),
+            decision_id=str(command.decision_id),
+            status=PlaybackStatus.DUPLICATE,
+        )
+
+
 def _decision(mode: RunMode = RunMode.AUTOMATIC) -> DecisionCompleted:
     return DecisionCompleted(
         event_id=uuid4(),
@@ -130,6 +139,33 @@ def test_failed_delivery_is_terminal_safety_history_for_policy_limits() -> None:
     assert attempts[0][1].find('"status":"pending"') >= 0
     assert attempts[1][1].find('"status":"failed"') >= 0
     assert attempts[2][1] is None
+
+
+def test_duplicate_delivery_is_terminal_safety_history_for_policy_limits() -> None:
+    repository = SQLiteAuditRepository()
+    service = AudioRequestService(
+        AudioPolicy(
+            AudioPolicyConfig(
+                mode=RunMode.AUTOMATIC,
+                audio_muted=False,
+                cooldown_seconds=600,
+                hourly_audio_cap=10,
+                daily_audio_cap=10,
+            )
+        ),
+        _DuplicateAudioController(),
+        repository,
+    )
+    first = service.request(_decision(), camera_id="cam-1", zone_id="zone-a", now=datetime.now(UTC))
+    second = service.request(
+        _decision(), camera_id="cam-1", zone_id="zone-a", now=datetime.now(UTC)
+    )
+    assert first.allowed
+    assert second.reason_code.value == "zone_cooldown"
+    receipts = repository.connection.execute(
+        "SELECT json_extract(playback, '$.status') FROM audio_receipts ORDER BY created_at"
+    ).fetchall()
+    assert [row[0] for row in receipts if row[0] is not None] == ["duplicate"]
 
 
 def test_controller_exception_finalizes_reservation_before_reraising() -> None:

@@ -42,6 +42,10 @@ std::string CandidateEnvelope::to_json() const {
   output << std::setprecision(17);
   output << '{';
   key(output, "schema_version"); quote(output, "track.candidate.v1");
+  output << ','; key(output, "event_id"); quote(output, event_id);
+  output << ','; key(output, "correlation_id"); quote(output, correlation_id);
+  output << ','; key(output, "producer"); quote(output, producer);
+  output << ','; key(output, "occurred_at"); quote(output, occurred_at);
   output << ','; key(output, "camera_id"); quote(output, camera_id);
   output << ','; key(output, "track_id"); quote(output, track_id);
   output << ','; key(output, "camera_config_revision"); quote(output, camera_config_revision);

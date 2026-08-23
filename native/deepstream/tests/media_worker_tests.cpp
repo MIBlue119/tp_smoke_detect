@@ -49,6 +49,11 @@ int main() {
   CHECK(candidate.has_value());
   const std::string json = candidate->to_json();
   CHECK(json.find("track.candidate.v1") != std::string::npos);
+  CHECK(json.find("\"event_id\":\"") != std::string::npos);
+  CHECK(json.find("\"correlation_id\":\"") != std::string::npos);
+  CHECK(json.find("\"producer\":\"tp-smoke-detect.native-reference\"") !=
+        std::string::npos);
+  CHECK(json.find("\"occurred_at\":\"") != std::string::npos);
   CHECK(json.find("raw_pixels") == std::string::npos);
   CHECK(json.find("cam-a") != std::string::npos);
   CHECK(!worker.ingest("missing", frame(), t0));
@@ -68,6 +73,7 @@ int main() {
   CHECK(publisher.publish_failures() == 1);
   CHECK(publisher.flush([](const auto&) { return true; }) == 2);
   CHECK(publisher.pending() == 0);
+  std::cout << json << std::endl;
 #undef CHECK
   return 0;
 }

@@ -56,6 +56,22 @@ def test_sampling_clock_is_stable_and_does_not_duplicate_frames(tmp_path: Path) 
     assert first.candidates[1].received_ts_ns == 200_000_000
 
 
+def test_replay_event_identity_includes_recording_identity(tmp_path: Path) -> None:
+    store = _store(tmp_path, "f0.png")
+    base = {
+        "camera_id": "cam-1",
+        "recording_id": "recording-a",
+        "frames": [_frame(0, 0, "f0.png")],
+    }
+    first = ReplayWorker(synthetic_camera(), store).replay(base)
+    second = ReplayWorker(synthetic_camera(), store).replay(base | {"recording_id": "recording-b"})
+    repeat = ReplayWorker(synthetic_camera(), store).replay(base)
+
+    assert first.candidates[0].event_id != second.candidates[0].event_id
+    assert first.candidates[0].correlation_id != second.candidates[0].correlation_id
+    assert first.candidates[0].event_id == repeat.candidates[0].event_id
+
+
 def test_roi_and_excluded_zone_filter_candidates_without_media_leakage(tmp_path: Path) -> None:
     store = _store(tmp_path, "inside.png", "excluded.png", "outside.png")
     camera = synthetic_camera().model_validate(

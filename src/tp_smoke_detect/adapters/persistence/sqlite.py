@@ -948,6 +948,11 @@ class SQLiteAuditRepository:
                     "failed",
                     "expired",
                     "uncertain",
+                    # A duplicate is a terminal controller acknowledgement:
+                    # the command was already accepted for delivery. Count it
+                    # in cooldown/cap history even when the local receipt was
+                    # reconstructed after a controller retry.
+                    "duplicate",
                 }:
                     continue
                 accepted.append(datetime.fromisoformat(str(row[0])).astimezone(UTC))
@@ -1256,6 +1261,7 @@ class SQLiteAuditRepository:
                 "failed",
                 "expired",
                 "uncertain",
+                "duplicate",
             }
             if current is None:
                 self.connection.execute(
