@@ -1,0 +1,42 @@
+# VIDEO-302 media plane. Build one of the explicit targets:
+#   docker build --target reference -f deploy/Dockerfile.media .
+#   docker build --target deepstream -f deploy/Dockerfile.media \
+#     --build-arg DEEPSTREAM_IMAGE=nvcr.io/nvidia/deepstream:9.1-devel@sha256:<digest> .
+# The DeepStream digest, host driver, and image import receipt are mandatory
+# qualification inputs. The default target intentionally contains no NVIDIA SDK.
+
+ARG DEEPSTREAM_IMAGE=nvcr.io/nvidia/deepstream:9.1-devel
+
+FROM ubuntu:24.04 AS reference-build
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       build-essential ca-certificates cmake \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY native/deepstream /src/native/deepstream
+RUN cmake -S native/deepstream -B /tmp/media-build -DBUILD_TESTING=ON \
+    && cmake --build /tmp/media-build --parallel \
+    && ctest --test-dir /tmp/media-build --output-on-failure
+
+FROM ubuntu:24.04 AS reference
+COPY --from=reference-build /tmp/media-build/libmedia_worker.a /opt/smoke-detect/lib/
+COPY --from=reference-build /src/native/deepstream/include /opt/smoke-detect/include
+LABEL org.opencontainers.image.title="tp-smoke-detect media worker (CPU reference)" \
+      org.opencontainers.image.description="Bounded media lifecycle and contract reference path"
+
+FROM ${DEEPSTREAM_IMAGE} AS deepstream-build
+ARG DEEPSTREAM_SDK_ROOT=/opt/nvidia/deepstream/deepstream
+WORKDIR /src
+COPY native/deepstream /src/native/deepstream
+RUN cmake -S native/deepstream -B /tmp/media-build \
+      -DBUILD_TESTING=ON \
+      -DTP_SMOKE_DETECT_ENABLE_DEEPSTREAM=ON \
+      -DDEEPSTREAM_SDK_ROOT=${DEEPSTREAM_SDK_ROOT} \
+    && cmake --build /tmp/media-build --parallel \
+    && ctest --test-dir /tmp/media-build --output-on-failure
+
+FROM ${DEEPSTREAM_IMAGE} AS deepstream
+COPY --from=deepstream-build /tmp/media-build/libmedia_worker.a /opt/smoke-detect/lib/
+COPY --from=deepstream-build /src/native/deepstream/include /opt/smoke-detect/include
+LABEL org.opencontainers.image.title="tp-smoke-detect media worker (DeepStream 9.1)" \
+      org.opencontainers.image.description="GPU media plane; target hardware qualification required"
