@@ -12,6 +12,7 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "Walnutek" }]
 dependencies = [
   "fastapi>=0.115,<1",
+  "uvicorn>=0.32,<1",
   "pydantic>=2.10,<3",
   "pydantic-settings>=2.7,<3",
   "PyYAML>=6.0,<7",
@@ -41,6 +42,9 @@ packages = ["src/tp_smoke_detect"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
+markers = [
+  "gpu: target-hardware qualification (opt-in; skipped on the CPU profile)",
+]
 
 [tool.ruff]
 line-length = 100

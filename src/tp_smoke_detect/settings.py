@@ -73,6 +73,11 @@ class AppSettings(BaseSettings):
 
     service_name: str = "tp-smoke-detect"
     environment: Literal["development", "test", "staging", "production"] = "development"
+    # SQLite is the CPU/reference persistence adapter.  Production deployments
+    # may provide the PostgreSQL adapter through the same repository port; the
+    # default remains in-memory so importing the ASGI app is side-effect free.
+    database: str = ":memory:"
+    artifact_root: str = "artifacts"
     policy: PolicySettings = Field(default_factory=PolicySettings)
     cameras: list[CameraProfile] = Field(default_factory=list)
 

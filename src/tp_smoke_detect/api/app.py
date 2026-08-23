@@ -96,8 +96,8 @@ def create_app(
     """Build an app with explicit dependencies, suitable for tests and ASGI."""
 
     app_settings = settings or AppSettings()
-    repo: AuditRepository = repository or SQLiteAuditRepository(":memory:")
-    root = Path(artifact_root or "artifacts")
+    repo: AuditRepository = repository or SQLiteAuditRepository(app_settings.database)
+    root = Path(artifact_root or app_settings.artifact_root)
     root.mkdir(parents=True, exist_ok=True)
     app = FastAPI(title="TP Smoke Detect AI Core", version="1.0.0", openapi_url="/openapi.json")
     app.state.repository = repo
