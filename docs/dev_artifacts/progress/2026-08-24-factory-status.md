@@ -26,6 +26,20 @@
 - CPU replay demo: 2 deterministic candidates, 0 errors
 - Remote: `origin/develop` contains commit `6018e2d`
 
+## U12 release hardening
+
+- REL-801 documentation implementation is complete on `release/0.1.0`:
+  README/AGENTS takeover guidance plus installation, operations,
+  incident-response, and model-release runbooks.
+- CPU/replay qualification passed (85 tests); formatting, mypy, schema,
+  config, demo, Compose syntax, and ML metadata checks passed.
+- Repository-wide lint still has four pre-existing import-order diagnostics in
+  domain tests; no new lint diagnostics were introduced.
+- Sol structured review, release image digests/SBOMs, target hardware,
+  model-origin/evaluation, site retention, agency/legal, silent-period, and
+  physical-audio receipts remain open. The release is not production-ready;
+  shadow/muted remains the default.
+
 ## External gates
 
 - Target-hardware DeepStream and 20-camera qualification require the accepted NVIDIA host and camera streams.

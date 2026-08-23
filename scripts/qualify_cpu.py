@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import subprocess
-import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -41,7 +40,10 @@ def main() -> int:
     output = args.output or Path(
         f"docs/dev_artifacts/qualification/{datetime.now(UTC).date().isoformat()}-int-701-cpu.md"
     )
-    command = [sys.executable, "-m", "pytest", "tests/e2e", "-q"]
+    # Keep the receipt reproducible across checkouts.  The uv entry point
+    # selects the locked project environment without leaking this host's
+    # absolute .venv path into a durable artifact.
+    command = ["uv", "run", "pytest", "tests/e2e", "-q"]
     completed = subprocess.run(command, check=False, capture_output=True, text=True)
     output.parent.mkdir(parents=True, exist_ok=True)
     status = "PASS" if completed.returncode == 0 else "FAIL"
