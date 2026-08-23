@@ -35,6 +35,16 @@ uv run smoke-detect schema --output schemas/smoke/v1
 uv run smoke-detect validate-config configs/camera.example.yaml
 uv run smoke-detect demo --fixture synthetic
 uv run python scripts/qualify_cpu.py
+
+# Native CPU reference qualification (run both optimization profiles)
+cmake -S native/deepstream -B native/deepstream/build-debug \
+  -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build native/deepstream/build-debug --parallel
+ctest --test-dir native/deepstream/build-debug --output-on-failure
+cmake -S native/deepstream -B native/deepstream/build-release \
+  -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build native/deepstream/build-release --parallel
+ctest --test-dir native/deepstream/build-release --output-on-failure
 ```
 
 The CPU profile needs no GPU, DeepStream, Triton, model weights, speaker,

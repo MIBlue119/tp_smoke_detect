@@ -7,7 +7,10 @@ from uuid import uuid4
 import pytest
 
 from tp_smoke_detect.adapters.audio.http import HttpAudioController
-from tp_smoke_detect.adapters.persistence.sqlite import SQLiteAuditRepository
+from tp_smoke_detect.adapters.persistence.sqlite import (
+    EvaluationClaimLostError,
+    SQLiteAuditRepository,
+)
 from tp_smoke_detect.api.app import create_app
 from tp_smoke_detect.application.request_audio import AudioRequestService
 from tp_smoke_detect.contracts import AudioCommand, RunMode
@@ -93,7 +96,7 @@ def _eligible_decision_payload(decision_id: str) -> dict[str, object]:
     return decision
 
 
-def test_evaluation_input_cannot_make_audio_eligible_decision() -> None:
+def test_operational_evaluation_rejects_caller_authored_decision() -> None:
     repository = SQLiteAuditRepository()
     app = create_app(
         repository,
@@ -111,19 +114,9 @@ def test_evaluation_input_cannot_make_audio_eligible_decision() -> None:
             "decision": _eligible_decision_payload(decision_id),
         },
     )
-    assert status == 202
-    saved = repository.get_evaluation(response["evaluation_id"])
-    assert saved is not None
-    saved_decision = repository.get_decision(decision_id)
-    assert saved_decision is not None
-    assert saved_decision["audio_eligibility"] is False
-    repository.upsert_camera(
-        {"camera_id": "cam-1", "zone_id": "zone-a", "revision": "r1", "active": True}
-    )
-    status, audio_response = _asgi_json(app, "/v1/audio/requests", {"decision_id": decision_id})
-    assert status == 201
-    assert audio_response["reason_code"] == "decision_ineligible"
-    assert app.state.audio_controller.commands == []
+    assert status == 422
+    assert "Extra inputs are not permitted" in str(response)
+    assert repository.connection.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 0
 
 
 def test_idempotency_key_rejects_a_different_request() -> None:
@@ -158,6 +151,29 @@ def test_stale_evaluation_claim_is_reclaimed_with_same_fingerprint() -> None:
     assert saved["evaluation_id"] == "new"
 
 
+def test_reclaimed_evaluation_owner_is_fenced_before_decision_insert() -> None:
+    repository = SQLiteAuditRepository()
+    assert repository.claim_evaluation("old", "fence-key", "cam-1", "fingerprint") is None
+    repository.connection.execute(
+        "UPDATE evaluations SET claim_expires_at=? WHERE idempotency_key=?",
+        ("2000-01-01T00:00:00+00:00", "fence-key"),
+    )
+    repository.connection.commit()
+    assert repository.claim_evaluation("new", "fence-key", "cam-1", "fingerprint") is None
+    decision = _decision(str(uuid4()))
+    evaluation = {
+        "evaluation_id": "old",
+        "status": "completed",
+        "result": {"decision": decision},
+        "idempotency_key": "fence-key",
+        "request_fingerprint": "fingerprint",
+        "camera_id": "cam-1",
+    }
+    with pytest.raises(EvaluationClaimLostError):
+        repository.put_decision_and_evaluation(decision, evaluation)
+    assert repository.connection.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 0
+
+
 def test_completed_evaluation_is_not_failed_when_metric_recording_raises() -> None:
     repository = SQLiteAuditRepository()
     app = create_app(repository, settings=AppSettings(cameras=[]))
@@ -168,8 +184,8 @@ def test_completed_evaluation_is_not_failed_when_metric_recording_raises() -> No
 
     app.state.metrics.decision = fail_metric
     headers = [(b"idempotency-key", b"metric-key")]
-    with pytest.raises(RuntimeError, match="metrics unavailable"):
-        _asgi_json(app, "/v1/evaluations", {"camera_id": "cam-1"}, headers)
+    status, response = _asgi_json(app, "/v1/evaluations", {"camera_id": "cam-1"}, headers)
+    assert status == 202
     saved = repository.get_evaluation_by_idempotency("metric-key")
     assert saved is not None
     assert saved["status"] == "completed"
@@ -178,6 +194,41 @@ def test_completed_evaluation_is_not_failed_when_metric_recording_raises() -> No
     assert status == 202
     assert response["evaluation_id"] == saved["evaluation_id"]
     assert repository.connection.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 1
+
+
+def test_expired_audio_reservation_requires_explicit_reconciliation_and_never_resends() -> None:
+    repository = SQLiteAuditRepository()
+    now = datetime.now(UTC)
+    repository.reserve_audio_receipt(
+        {
+            "receipt_id": "audio:expired",
+            "decision_id": "expired",
+            "camera_id": "cam-1",
+            "zone_id": "zone-a",
+            "created_at": (now - timedelta(seconds=10)).isoformat(),
+        },
+        reservation_ttl_seconds=1,
+    )
+    reconciled = repository.reconcile_expired_audio_receipt(
+        "audio:expired", now=now, actor="operator-1", reason="worker host restarted"
+    )
+    assert reconciled["playback"]["status"] == "expired"
+    assert reconciled["reconciled_by"] == "operator-1"
+    assert reconciled["reconciliation_reason"] == "worker host restarted"
+    retry = repository.reserve_audio_receipt(
+        {
+            "receipt_id": "audio:expired",
+            "decision_id": "expired",
+            "camera_id": "cam-1",
+            "zone_id": "zone-a",
+            "created_at": now.isoformat(),
+        },
+        reservation_ttl_seconds=30,
+    )
+    assert retry == {
+        "reservation_status": "rejected",
+        "reservation_reason": "reservation_expired",
+    }
 
 
 class _AlwaysFailAudio:
@@ -264,6 +315,9 @@ def test_decision_metric_maps_arbitrary_reason_to_other() -> None:
 
 
 class _Response:
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
     def __enter__(self) -> _Response:
         return self
 
@@ -271,14 +325,17 @@ class _Response:
         return None
 
     def read(self) -> bytes:
-        return b'{"command_id":"wrong","decision_id":"wrong","status":"accepted"}'
+        return self.body
 
 
 def test_http_audio_rejects_receipt_for_a_different_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "tp_smoke_detect.adapters.audio.http.urlopen", lambda *args, **kwargs: _Response()
+        "tp_smoke_detect.adapters.audio.http.urlopen",
+        lambda *args, **kwargs: _Response(
+            b'{"command_id":"wrong","decision_id":"wrong","status":"accepted"}'
+        ),
     )
     adapter = HttpAudioController("http://127.0.0.1/audio")
     command = AudioCommand(
@@ -297,3 +354,62 @@ def test_http_audio_rejects_receipt_for_a_different_command(
     receipt = adapter.send(command)
     assert receipt.status is PlaybackStatus.FAILED
     assert receipt.detail_code == "adapter_error"
+
+
+def test_http_audio_rejects_accepted_receipt_after_command_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = AudioCommand(
+        event_id=uuid4(),
+        correlation_id=uuid4(),
+        producer="test",
+        occurred_at=datetime.now(UTC),
+        command_id=uuid4(),
+        decision_id=uuid4(),
+        zone_id="zone-a",
+        message_id="smoke-reminder-neutral-01",
+        volume_profile="default",
+        expires_at=datetime.now(UTC) + timedelta(seconds=30),
+        policy_revision="p1",
+    )
+    late_at = (command.expires_at + timedelta(seconds=1)).isoformat()
+    late_body = (
+        f'{{"command_id":"{command.command_id}","decision_id":"{command.decision_id}",'
+        f'"status":"accepted","accepted_at":"{late_at}"}}'
+    ).encode()
+    monkeypatch.setattr(
+        "tp_smoke_detect.adapters.audio.http.urlopen",
+        lambda *args, **kwargs: _Response(late_body),
+    )
+    receipt = HttpAudioController("http://127.0.0.1/audio").send(command)
+    assert receipt.status is PlaybackStatus.EXPIRED
+    assert receipt.detail_code == "late_receipt"
+
+
+def test_http_audio_rejects_receipt_with_naive_timestamp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = AudioCommand(
+        event_id=uuid4(),
+        correlation_id=uuid4(),
+        producer="test",
+        occurred_at=datetime.now(UTC),
+        command_id=uuid4(),
+        decision_id=uuid4(),
+        zone_id="zone-a",
+        message_id="smoke-reminder-neutral-01",
+        volume_profile="default",
+        expires_at=datetime.now(UTC) + timedelta(seconds=30),
+        policy_revision="p1",
+    )
+    naive_body = (
+        f'{{"command_id":"{command.command_id}","decision_id":"{command.decision_id}",'
+        '"status":"accepted","accepted_at":"2026-08-24T00:00:00"}'
+    ).encode()
+    monkeypatch.setattr(
+        "tp_smoke_detect.adapters.audio.http.urlopen",
+        lambda *args, **kwargs: _Response(naive_body),
+    )
+    receipt = HttpAudioController("http://127.0.0.1/audio").send(command)
+    assert receipt.status is PlaybackStatus.FAILED
+    assert receipt.detail_code == "invalid_receipt_time"

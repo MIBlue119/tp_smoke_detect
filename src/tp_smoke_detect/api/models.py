@@ -13,7 +13,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ..contracts import DecisionCompleted, RunMode
+from ..contracts import RunMode
 from ..settings import CameraProfile
 
 
@@ -33,7 +33,6 @@ class EvaluationCreate(APIModel):
     artifact_id: str | None = Field(default=None, min_length=1, max_length=128)
     camera_id: str = Field(min_length=1, max_length=128)
     mode: RunMode = RunMode.REPLAY
-    decision: DecisionCompleted | None = None
 
 
 class ReviewCreate(APIModel):
@@ -73,6 +72,11 @@ class AudioMuteCreate(APIModel):
 
 class AudioRequestCreate(APIModel):
     decision_id: UUID
+
+
+class AudioReceiptReconcile(APIModel):
+    actor: str = Field(min_length=1, max_length=128)
+    reason: str = Field(min_length=1, max_length=1000)
 
 
 class CameraUpdate(APIModel):

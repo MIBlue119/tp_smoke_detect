@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -14,6 +15,8 @@ from ..domain.policy.audio import (
     AudioReasonCode,
 )
 from ..ports.audio import AudioController, AudioPlaybackReceipt, PlaybackStatus
+
+logger = logging.getLogger(__name__)
 
 
 class AudioRequestService:
@@ -108,21 +111,27 @@ class AudioRequestService:
                 # a typed receipt.  Persist the terminal failure before
                 # re-raising so the caller can retry after the bounded TTL.
                 if reservation_token is not None:
-                    self._record(
-                        decision,
-                        camera_id,
-                        zone_id,
-                        AudioPolicyResult(
-                            False, AudioReasonCode.ADAPTER_ERROR, "suppressed", result.command
-                        ),
-                        None,
-                        now,
-                        playback_override={
-                            "status": "failed",
-                            "detail_code": "adapter_error",
-                        },
-                        reservation_token=reservation_token,
-                    )
+                    try:
+                        self._record(
+                            decision,
+                            camera_id,
+                            zone_id,
+                            AudioPolicyResult(
+                                False, AudioReasonCode.ADAPTER_ERROR, "suppressed", result.command
+                            ),
+                            None,
+                            now,
+                            playback_override={
+                                "status": "failed",
+                                "detail_code": "adapter_error",
+                            },
+                            reservation_token=reservation_token,
+                        )
+                    except Exception:
+                        # Preserve the controller failure.  Finalization is a
+                        # separate durability concern and must be surfaced in
+                        # logs without masking the original adapter exception.
+                        logger.warning("audio failure finalization failed", exc_info=True)
                 raise
             if receipt.status in {
                 PlaybackStatus.FAILED,

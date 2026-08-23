@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,7 +13,11 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, st
 from fastapi.responses import PlainTextResponse
 
 from ..adapters.audio.fake import FakeAudioController
-from ..adapters.persistence.sqlite import IdempotencyConflictError, SQLiteAuditRepository
+from ..adapters.persistence.sqlite import (
+    EvaluationClaimLostError,
+    IdempotencyConflictError,
+    SQLiteAuditRepository,
+)
 from ..application.request_audio import AudioRequestService
 from ..contracts import RunMode
 from ..domain.policy.audio import AudioPolicy, AudioPolicyConfig
@@ -24,6 +29,7 @@ from ..settings import AppSettings, CameraProfile, load_settings
 from .models import (
     ArtifactCreate,
     AudioMuteCreate,
+    AudioReceiptReconcile,
     AudioRequestCreate,
     CameraUpdate,
     EvaluationCreate,
@@ -36,6 +42,9 @@ from .models import (
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_artifact_path(path: str, root: Path) -> str:
@@ -65,15 +74,6 @@ def _evaluation_request_fingerprint(request: EvaluationCreate) -> str:
 
 
 def _decision_for_evaluation(request: EvaluationCreate) -> dict[str, object]:
-    if request.decision is not None:
-        decision = request.decision.model_dump(mode="json")
-        decision["decision_id"] = str(request.decision.decision_id)
-        # Evaluation submissions are untrusted replay input.  Eligibility is
-        # granted only by the local cascade, never by a caller-provided fact.
-        decision["audio_eligibility"] = False
-        # A replay's requested mode is authoritative for its audit record.
-        decision["mode"] = request.mode.value
-        return decision
     return {
         "decision_id": str(uuid4()),
         "camera_id": request.camera_id,
@@ -266,11 +266,7 @@ def create_app(
             # pollable while a future worker can replace this with running status.
             if request.mode is RunMode.SHADOW:
                 decision["audio_eligibility"] = False
-                decision["audio_outcome"] = (
-                    "would_announce"
-                    if request.decision and request.decision.audio_eligibility
-                    else None
-                )
+                decision["audio_outcome"] = None
             evaluation = {
                 "evaluation_id": str(evaluation_id),
                 "status": "completed",
@@ -293,6 +289,14 @@ def create_app(
                 saved_decision = repository.put_decision(decision)
                 evaluation["result"] = {"decision": saved_decision}
                 saved = repository.put_evaluation(evaluation)
+        except EvaluationClaimLostError as exc:
+            # A reclaimed idempotency lease fences the old owner before it can
+            # insert a decision.  It must not mark the replacement claim
+            # failed or leak a second side effect.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="evaluation claim was reclaimed; retry the request",
+            ) from exc
         except Exception as exc:
             if claimed:
                 fail = getattr(repository, "fail_evaluation", None)
@@ -303,10 +307,16 @@ def create_app(
         # Metrics are observational and run after the transaction.  A scrape
         # failure must never reopen a committed evaluation or duplicate its
         # decision on an idempotent retry.
-        app.state.metrics.decision(
-            str(saved_decision_any["outcome"]),
-            str(saved_decision_any["reason_codes"][0]),
-        )
+        try:
+            app.state.metrics.decision(
+                str(saved_decision_any["outcome"]),
+                str(saved_decision_any["reason_codes"][0]),
+            )
+        except Exception:
+            # Metrics are strictly observational.  The durable transaction has
+            # already committed, so a scrape/registry failure must not turn a
+            # successful request into a retryable error.
+            logger.warning("evaluation metric recording failed", exc_info=True)
         return _evaluation_response(saved)
 
     @app.get(
@@ -424,6 +434,8 @@ def create_app(
                     "accepted",
                     "pending",
                     "failed",
+                    "expired",
+                    "uncertain",
                 }
             ]
             announced_at = tuple(
@@ -461,6 +473,29 @@ def create_app(
         zone_lock = app.state.audio_locks.setdefault(zone_id, threading.RLock())
         with zone_lock:
             return perform()
+
+    @app.post("/v1/audio/receipts/{receipt_id}/reconcile", tags=["policy"])
+    def reconcile_audio_receipt(
+        receipt_id: str,
+        request: AudioReceiptReconcile,
+        repository: Repo,
+    ) -> dict[str, object]:
+        """Explicitly fence an expired in-flight command without resending it."""
+
+        reconcile = getattr(repository, "reconcile_expired_audio_receipt", None)
+        if reconcile is None:
+            raise HTTPException(status_code=501, detail="audio reconciliation is unavailable")
+        result = cast(
+            dict[str, object],
+            reconcile(receipt_id, actor=request.actor, reason=request.reason),
+        )
+        if result.get("reservation_status") == "rejected":
+            reason = str(result.get("reservation_reason", "reconciliation_rejected"))
+            raise HTTPException(
+                status_code=404 if reason == "missing" else 409,
+                detail=reason,
+            )
+        return result
 
     @app.get("/v1/models", tags=["models"])
     def models(repository: Repo) -> list[dict[str, object]]:

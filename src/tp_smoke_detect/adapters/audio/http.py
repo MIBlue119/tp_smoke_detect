@@ -128,6 +128,23 @@ class HttpAudioController:
                     accepted_at=now,
                     detail_code="adapter_error",
                 )
+            if receipt.accepted_at.tzinfo is None or receipt.accepted_at.utcoffset() is None:
+                return AudioPlaybackReceipt(
+                    command_id=str(command.command_id),
+                    decision_id=str(command.decision_id),
+                    status=PlaybackStatus.FAILED,
+                    accepted_at=now,
+                    detail_code="invalid_receipt_time",
+                )
+            receipt_at = receipt.accepted_at.astimezone(UTC)
+            if receipt_at > command.expires_at.astimezone(UTC):
+                return AudioPlaybackReceipt(
+                    command_id=str(command.command_id),
+                    decision_id=str(command.decision_id),
+                    status=PlaybackStatus.EXPIRED,
+                    accepted_at=receipt_at,
+                    detail_code="late_receipt",
+                )
             return receipt
         except TimeoutError:
             return AudioPlaybackReceipt(

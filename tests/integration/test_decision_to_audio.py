@@ -148,6 +148,22 @@ def test_controller_exception_finalizes_reservation_before_reraising() -> None:
     assert saved["reason_code"] == "adapter_error"
 
 
+def test_controller_exception_survives_finalize_failure() -> None:
+    repository = SQLiteAuditRepository()
+
+    def fail_finalize(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise OSError("database unavailable while finalizing")
+
+    repository.finalize_audio_receipt = fail_finalize
+    service = AudioRequestService(
+        AudioPolicy(AudioPolicyConfig(mode=RunMode.AUTOMATIC, audio_muted=False)),
+        _RaisingAudioController(),
+        repository,
+    )
+    with pytest.raises(RuntimeError, match="controller unavailable"):
+        service.request(_decision(), camera_id="cam-1", zone_id="zone-a", now=datetime.now(UTC))
+
+
 def test_pending_contender_cannot_clear_owner_or_release_expired_lease() -> None:
     repository = SQLiteAuditRepository()
     now = datetime.now(UTC)

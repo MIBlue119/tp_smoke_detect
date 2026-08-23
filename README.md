@@ -77,9 +77,10 @@ in the site artifact store under its approved retention policy.
 
 ## Common deployment checks
 
-The default Compose profile is local API, PostgreSQL, MQTT metadata transport,
-and Prometheus. Media and audio are explicit profiles. Before a site import,
-resolve every `REQUIRED-BEFORE-RELEASE` digest in
+The default Compose profile is the SQLite-backed local API and Prometheus.
+PostgreSQL and MQTT are present only in the `future-site` profile; media and
+audio are explicit profiles. Before a site import, resolve every
+`REQUIRED-BEFORE-RELEASE` digest in
 [`deploy/image-pins.yaml`](deploy/image-pins.yaml), attach SBOM and vulnerability
 dispositions, and preload the images on the air-gapped host.
 

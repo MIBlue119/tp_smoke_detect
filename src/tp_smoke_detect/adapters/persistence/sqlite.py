@@ -22,6 +22,10 @@ class IdempotencyConflictError(ValueError):
     """The same idempotency key was reused for a different request."""
 
 
+class EvaluationClaimLostError(RuntimeError):
+    """A reclaimed evaluation owner no longer has authority to complete."""
+
+
 EVALUATION_LEASE_SECONDS = 300
 
 
@@ -656,6 +660,16 @@ class SQLiteAuditRepository:
 
         try:
             self.connection.execute("BEGIN IMMEDIATE")
+            idempotency_key = evaluation.get("idempotency_key")
+            if idempotency_key is not None:
+                claim = self.connection.execute(
+                    "SELECT status, idempotency_key FROM evaluations WHERE evaluation_id=?",
+                    (evaluation["evaluation_id"],),
+                ).fetchone()
+                if claim is None or claim[0] != "running" or claim[1] != idempotency_key:
+                    raise EvaluationClaimLostError(
+                        "evaluation claim was reclaimed before completion"
+                    )
             self.put_decision(decision)
             saved = self.put_evaluation(evaluation)
             self.connection.commit()
@@ -915,6 +929,12 @@ class SQLiteAuditRepository:
                         "reservation_status": "rejected",
                         "reservation_reason": "zone_cooldown",
                     }
+                if current_playback.get("status") in {"expired", "uncertain"}:
+                    self.connection.rollback()
+                    return {
+                        "reservation_status": "rejected",
+                        "reservation_reason": "reservation_expired",
+                    }
             rows = self.connection.execute(
                 "SELECT created_at, playback FROM audio_receipts WHERE zone_id=?",
                 (item["zone_id"],),
@@ -922,7 +942,7 @@ class SQLiteAuditRepository:
             accepted: list[datetime] = []
             for row in rows:
                 playback = json.loads(row[1]) if row[1] is not None else {}
-                if playback.get("status") not in {"accepted", "pending", "failed"}:
+                if playback.get("status") not in {"accepted", "pending", "failed", "expired"}:
                     continue
                 accepted.append(datetime.fromisoformat(str(row[0])).astimezone(UTC))
             if (
@@ -989,6 +1009,119 @@ class SQLiteAuditRepository:
             self.connection.rollback()
             raise
         return item
+
+    @_synchronized
+    def reconcile_expired_audio_receipt(
+        self,
+        receipt_id: str,
+        *,
+        now: datetime | None = None,
+        actor: str | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """CAS an expired pending lease to an in-doubt terminal fact.
+
+        Reconciliation is an explicit operator/worker action. It never sends
+        audio and never releases a lease merely because it is old; the caller
+        must invoke this method after the command lifetime has elapsed. The
+        terminal ``expired`` state remains a safety fence, preventing a retry
+        from blindly issuing the same command.
+        """
+
+        observed_at = (now or datetime.now(UTC)).astimezone(UTC)
+        try:
+            self.connection.execute("BEGIN IMMEDIATE")
+            current = self.connection.execute(
+                "SELECT playback, payload FROM audio_receipts WHERE receipt_id=?",
+                (receipt_id,),
+            ).fetchone()
+            if current is None:
+                self.connection.rollback()
+                return {"reservation_status": "rejected", "reservation_reason": "missing"}
+            playback = json.loads(current[0]) if current[0] else {}
+            payload = cast(dict[str, Any], json.loads(current[1]))
+            if playback.get("status") != "pending":
+                self.connection.commit()
+                result = cast(dict[str, Any], _normalize_persisted(payload))
+                result["reservation_status"] = "already_finalized"
+                return result
+            expiry_value = playback.get("reservation_expires_at")
+            if not expiry_value:
+                self.connection.rollback()
+                return {
+                    "reservation_status": "rejected",
+                    "reservation_reason": "missing_expiry",
+                }
+            expiry = datetime.fromisoformat(str(expiry_value))
+            if expiry.tzinfo is None or expiry.astimezone(UTC) > observed_at:
+                self.connection.rollback()
+                return {
+                    "reservation_status": "rejected",
+                    "reservation_reason": "reservation_not_expired",
+                }
+            terminal = {
+                **playback,
+                "status": "expired",
+                "detail_code": "reservation_expired",
+                "reconciled_at": observed_at.isoformat(),
+            }
+            payload.update(
+                {
+                    "outcome": "suppressed",
+                    "reason_code": "reservation_expired",
+                    "playback": terminal,
+                    "created_at": observed_at.isoformat(),
+                }
+            )
+            if actor is not None:
+                payload["reconciled_by"] = actor
+            if reason is not None:
+                payload["reconciliation_reason"] = reason
+            updated = self.connection.execute(
+                """UPDATE audio_receipts SET outcome=?, reason_code=?, playback=?,
+                created_at=?, payload=? WHERE receipt_id=? AND playback=?""",
+                (
+                    "suppressed",
+                    "reservation_expired",
+                    _json(terminal),
+                    observed_at.isoformat(),
+                    _json(payload),
+                    receipt_id,
+                    current[0],
+                ),
+            )
+            if updated.rowcount != 1:
+                self.connection.rollback()
+                return {
+                    "reservation_status": "rejected",
+                    "reservation_reason": "reservation_owner_mismatch",
+                }
+            max_attempt = self.connection.execute(
+                "SELECT COALESCE(MAX(attempt_no), 0) FROM audio_receipt_attempts "
+                "WHERE receipt_id=?",
+                (receipt_id,),
+            ).fetchone()
+            self.connection.execute(
+                """INSERT INTO audio_receipt_attempts
+                (receipt_id,attempt_no,decision_id,outcome,reason_code,command_id,playback,
+                 created_at,payload) VALUES (?,?,?,?,?,?,?,?,?)""",
+                (
+                    receipt_id,
+                    int(max_attempt[0]) + 1,
+                    payload["decision_id"],
+                    "suppressed",
+                    "reservation_expired",
+                    payload.get("command_id"),
+                    _json(terminal),
+                    observed_at.isoformat(),
+                    _json(payload),
+                ),
+            )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return self.get_audio_receipt(receipt_id) or payload
 
     @_synchronized
     def finalize_audio_receipt(
@@ -1112,7 +1245,13 @@ class SQLiteAuditRepository:
             # still in flight, but it must not overwrite that sender's active
             # pending lease.  Only finalize_audio_receipt, with the matching
             # owner token, may transition pending to a terminal state.
-            preserve_terminal = current_status in {"accepted", "pending", "failed"}
+            preserve_terminal = current_status in {
+                "accepted",
+                "pending",
+                "failed",
+                "expired",
+                "uncertain",
+            }
             if current is None:
                 self.connection.execute(
                     """INSERT INTO audio_receipts

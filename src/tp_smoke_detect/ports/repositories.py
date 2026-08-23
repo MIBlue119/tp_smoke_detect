@@ -90,6 +90,15 @@ class AuditRepository(Protocol):
         self, receipt_id: str, reservation_token: str, receipt: dict[str, Any]
     ) -> dict[str, Any]: ...
 
+    def reconcile_expired_audio_receipt(
+        self,
+        receipt_id: str,
+        *,
+        now: datetime | None = None,
+        actor: str | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]: ...
+
     def get_audio_receipt(self, receipt_id: str) -> dict[str, Any] | None: ...
 
     def list_audio_receipts(

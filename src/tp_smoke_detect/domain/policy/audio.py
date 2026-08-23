@@ -37,6 +37,7 @@ class AudioReasonCode(StrEnum):
     ADAPTER_ERROR = "adapter_error"
     UNKNOWN_MESSAGE = "unknown_message"
     EXPIRED = "expired"
+    RESERVATION_EXPIRED = "reservation_expired"
 
 
 DEFAULT_MESSAGE_CATALOG: Mapping[str, str] = {
