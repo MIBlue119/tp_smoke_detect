@@ -1,0 +1,25 @@
+{
+  "schema_version": "evaluation.config.v1",
+  "event_gap_ms": 120000,
+  "calibration_bins": 10,
+  "split_ratios": {
+    "train": 0.7,
+    "validation": 0.15,
+    "sealed_test": 0.15
+  },
+  "named_confusion_classes": [
+    "betel_quid",
+    "phone",
+    "drink",
+    "food",
+    "nose_touch",
+    "pen_toothpick",
+    "steam",
+    "vape",
+    "heated_tobacco"
+  ],
+  "privacy": {
+    "store_media_in_git": false,
+    "store_weights_in_git": false
+  }
+}
