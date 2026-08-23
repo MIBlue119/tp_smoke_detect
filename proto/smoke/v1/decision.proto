@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package smoke.v1;
+
+message CompletedDecision {
+  string schema_version = 1;
+  string decision_id = 2;
+  string camera_id = 3;
+  string track_id = 4;
+  string outcome = 5;
+  repeated string reason_codes = 6;
+  string evidence_channels_json = 7;
+  map<string, string> model_revisions = 8;
+  string policy_revision = 9;
+  double latency_ms = 10;
+  string mode = 11;
+  bool audio_eligibility = 12;
+}

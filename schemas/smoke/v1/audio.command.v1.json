@@ -1,0 +1,62 @@
+{
+  "additionalProperties": false,
+  "description": "The ``audio.command.v1`` message represented as JSON.",
+  "properties": {
+    "command_id": {
+      "format": "uuid",
+      "title": "Command Id",
+      "type": "string"
+    },
+    "decision_id": {
+      "format": "uuid",
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "message_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Message Id",
+      "type": "string"
+    },
+    "policy_revision": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Policy Revision",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "audio.command.v1",
+      "default": "audio.command.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "volume_profile": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Volume Profile",
+      "type": "string"
+    },
+    "zone_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Zone Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "command_id",
+    "decision_id",
+    "zone_id",
+    "message_id",
+    "volume_profile",
+    "expires_at",
+    "policy_revision"
+  ],
+  "title": "AudioCommand",
+  "type": "object"
+}
