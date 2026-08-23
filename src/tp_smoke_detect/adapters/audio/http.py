@@ -117,7 +117,18 @@ class HttpAudioController:
         try:
             with urlopen(request, timeout=self.timeout_seconds) as response:
                 body = json.loads(response.read().decode("utf-8"))
-            return AudioPlaybackReceipt.model_validate(body)
+            receipt = AudioPlaybackReceipt.model_validate(body)
+            if receipt.command_id != str(command.command_id) or receipt.decision_id != str(
+                command.decision_id
+            ):
+                return AudioPlaybackReceipt(
+                    command_id=str(command.command_id),
+                    decision_id=str(command.decision_id),
+                    status=PlaybackStatus.FAILED,
+                    accepted_at=now,
+                    detail_code="adapter_error",
+                )
+            return receipt
         except TimeoutError:
             return AudioPlaybackReceipt(
                 command_id=str(command.command_id),

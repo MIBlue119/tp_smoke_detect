@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, st
 from fastapi.responses import PlainTextResponse
 
 from ..adapters.audio.fake import FakeAudioController
-from ..adapters.persistence.sqlite import SQLiteAuditRepository
+from ..adapters.persistence.sqlite import IdempotencyConflictError, SQLiteAuditRepository
 from ..application.request_audio import AudioRequestService
 from ..contracts import RunMode
 from ..domain.policy.audio import AudioPolicy, AudioPolicyConfig
@@ -57,10 +57,20 @@ def _safe_artifact_path(path: str, root: Path) -> str:
     return resolved.relative_to(resolved_root).as_posix()
 
 
+def _evaluation_request_fingerprint(request: EvaluationCreate) -> str:
+    canonical = json.dumps(
+        request.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+    ).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
 def _decision_for_evaluation(request: EvaluationCreate) -> dict[str, object]:
     if request.decision is not None:
         decision = request.decision.model_dump(mode="json")
         decision["decision_id"] = str(request.decision.decision_id)
+        # Evaluation submissions are untrusted replay input.  Eligibility is
+        # granted only by the local cascade, never by a caller-provided fact.
+        decision["audio_eligibility"] = False
         # A replay's requested mode is authoritative for its audit record.
         decision["mode"] = request.mode.value
         return decision
@@ -225,16 +235,30 @@ def create_app(
             raise HTTPException(status_code=404, detail="artifact not found")
         evaluation_id = uuid4()
         claimed = False
+        request_fingerprint = _evaluation_request_fingerprint(request)
         if idempotency_key:
             claim = getattr(repository, "claim_evaluation", None)
             if claim is not None:
-                existing = claim(str(evaluation_id), idempotency_key, request.camera_id)
+                try:
+                    existing = claim(
+                        str(evaluation_id),
+                        idempotency_key,
+                        request.camera_id,
+                        request_fingerprint,
+                    )
+                except IdempotencyConflictError as exc:
+                    raise HTTPException(status_code=409, detail=str(exc)) from exc
                 if existing is not None:
                     return _evaluation_response(existing)
                 claimed = True
             else:
                 existing = repository.get_evaluation_by_idempotency(idempotency_key)
                 if existing:
+                    if existing.get("request_fingerprint") != request_fingerprint:
+                        raise HTTPException(
+                            status_code=409,
+                            detail="idempotency key was reused for a different request",
+                        )
                     return _evaluation_response(existing)
         try:
             decision = _decision_for_evaluation(request)
@@ -252,6 +276,7 @@ def create_app(
                 "status": "completed",
                 "result": {"decision": decision},
                 "idempotency_key": idempotency_key,
+                "request_fingerprint": request_fingerprint,
                 "camera_id": request.camera_id,
             }
             atomic_complete = getattr(repository, "put_decision_and_evaluation", None)
@@ -268,18 +293,21 @@ def create_app(
                 saved_decision = repository.put_decision(decision)
                 evaluation["result"] = {"decision": saved_decision}
                 saved = repository.put_evaluation(evaluation)
-            saved_decision_any = cast(dict[str, Any], saved_decision)
-            app.state.metrics.decision(
-                str(saved_decision_any["outcome"]),
-                str(saved_decision_any["reason_codes"][0]),
-            )
-            return _evaluation_response(saved)
         except Exception as exc:
             if claimed:
                 fail = getattr(repository, "fail_evaluation", None)
                 if fail is not None:
                     fail(str(evaluation_id), error=type(exc).__name__)
             raise
+        saved_decision_any = cast(dict[str, Any], saved_decision)
+        # Metrics are observational and run after the transaction.  A scrape
+        # failure must never reopen a committed evaluation or duplicate its
+        # decision on an idempotent retry.
+        app.state.metrics.decision(
+            str(saved_decision_any["outcome"]),
+            str(saved_decision_any["reason_codes"][0]),
+        )
+        return _evaluation_response(saved)
 
     @app.get(
         "/v1/evaluations/{evaluation_id}", response_model=EvaluationResponse, tags=["evaluations"]
@@ -391,7 +419,12 @@ def create_app(
             accepted = [
                 item
                 for item in receipts
-                if (item.get("playback") or {}).get("status") in {"accepted", "pending"}
+                if (item.get("playback") or {}).get("status")
+                in {
+                    "accepted",
+                    "pending",
+                    "failed",
+                }
             ]
             announced_at = tuple(
                 datetime.fromisoformat(str(item["created_at"])).astimezone(UTC) for item in accepted

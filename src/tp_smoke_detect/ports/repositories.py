@@ -61,7 +61,11 @@ class AuditRepository(Protocol):
     def get_evaluation_by_idempotency(self, key: str) -> dict[str, Any] | None: ...
 
     def claim_evaluation(
-        self, evaluation_id: str, idempotency_key: str, camera_id: str
+        self,
+        evaluation_id: str,
+        idempotency_key: str,
+        camera_id: str,
+        request_fingerprint: str | None = None,
     ) -> dict[str, Any] | None: ...
 
     def fail_evaluation(self, evaluation_id: str, *, error: str | None = None) -> None: ...

@@ -18,6 +18,13 @@ from typing import Any, cast
 from uuid import uuid4
 
 
+class IdempotencyConflictError(ValueError):
+    """The same idempotency key was reused for a different request."""
+
+
+EVALUATION_LEASE_SECONDS = 300
+
+
 def _synchronized(method: Any) -> Any:
     """Serialize use of the single SQLite connection across request threads.
 
@@ -151,6 +158,8 @@ class SQLiteAuditRepository:
                 decision_id TEXT REFERENCES decisions(decision_id) ON DELETE CASCADE,
                 status TEXT NOT NULL,
                 idempotency_key TEXT UNIQUE,
+                request_fingerprint TEXT,
+                claim_expires_at TEXT,
                 result TEXT,
                 payload TEXT NOT NULL,
                 created_at TEXT NOT NULL,
@@ -209,6 +218,10 @@ class SQLiteAuditRepository:
         # where SQLite cannot alter an existing foreign-key constraint in place.
         with suppress(sqlite3.OperationalError):
             self.connection.execute("ALTER TABLE evaluations ADD COLUMN decision_id TEXT")
+        with suppress(sqlite3.OperationalError):
+            self.connection.execute("ALTER TABLE evaluations ADD COLUMN request_fingerprint TEXT")
+        with suppress(sqlite3.OperationalError):
+            self.connection.execute("ALTER TABLE evaluations ADD COLUMN claim_expires_at TEXT")
         self.connection.commit()
 
     @_synchronized
@@ -567,7 +580,8 @@ class SQLiteAuditRepository:
         item["decision_id"] = str(decision_id) if decision_id is not None else None
         was_in_transaction = self.connection.in_transaction
         existing = self.connection.execute(
-            "SELECT evaluation_id, idempotency_key FROM evaluations WHERE evaluation_id=?",
+            """SELECT evaluation_id, idempotency_key, request_fingerprint,
+               claim_expires_at FROM evaluations WHERE evaluation_id=?""",
             (item["evaluation_id"],),
         ).fetchone()
         if existing is not None:
@@ -576,12 +590,15 @@ class SQLiteAuditRepository:
             if existing[1] == item.get("idempotency_key"):
                 self.connection.execute(
                     """UPDATE evaluations SET decision_id=?, status=?, result=?, payload=?,
-                    updated_at=? WHERE evaluation_id=?""",
+                    request_fingerprint=?, claim_expires_at=?, updated_at=?
+                    WHERE evaluation_id=?""",
                     (
                         item["decision_id"],
                         item["status"],
                         _json(result) if result is not None else None,
                         _json(item),
+                        item.get("request_fingerprint", existing[2]),
+                        item.get("claim_expires_at", existing[3]),
                         item["updated_at"],
                         item["evaluation_id"],
                     ),
@@ -589,15 +606,24 @@ class SQLiteAuditRepository:
         else:
             # The unique idempotency key is claimed in the same write as
             # the evaluation for callers that do not use claim_evaluation.
+            existing_key = self.connection.execute(
+                "SELECT request_fingerprint FROM evaluations WHERE idempotency_key=?",
+                (item.get("idempotency_key"),),
+            ).fetchone()
+            if existing_key is not None and item.get("request_fingerprint") != existing_key[0]:
+                raise IdempotencyConflictError("idempotency key was reused for a different request")
             self.connection.execute(
                 """INSERT INTO evaluations
-                (evaluation_id,decision_id,status,idempotency_key,result,payload,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING""",
+                (evaluation_id,decision_id,status,idempotency_key,request_fingerprint,
+                 claim_expires_at,result,payload,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING""",
                 (
                     item["evaluation_id"],
                     item["decision_id"],
                     item["status"],
                     item.get("idempotency_key"),
+                    item.get("request_fingerprint"),
+                    item.get("claim_expires_at"),
                     _json(result) if result is not None else None,
                     _json(item),
                     item["created_at"],
@@ -691,7 +717,11 @@ class SQLiteAuditRepository:
 
     @_synchronized
     def claim_evaluation(
-        self, evaluation_id: str, idempotency_key: str, camera_id: str
+        self,
+        evaluation_id: str,
+        idempotency_key: str,
+        camera_id: str,
+        request_fingerprint: str | None = None,
     ) -> dict[str, Any] | None:
         """Claim an idempotency key before any decision side effect.
 
@@ -700,12 +730,18 @@ class SQLiteAuditRepository:
         """
 
         created_at = _now()
+        lease_expires_at = datetime.fromtimestamp(
+            datetime.fromisoformat(created_at).timestamp() + EVALUATION_LEASE_SECONDS,
+            UTC,
+        ).isoformat()
         item = {
             "evaluation_id": evaluation_id,
             "status": "running",
             "result": None,
             "idempotency_key": idempotency_key,
             "camera_id": camera_id,
+            "request_fingerprint": request_fingerprint,
+            "claim_expires_at": lease_expires_at,
             "created_at": created_at,
             "updated_at": created_at,
         }
@@ -716,9 +752,34 @@ class SQLiteAuditRepository:
             # and then race, potentially deleting each other's replacement.
             self.connection.execute("BEGIN IMMEDIATE")
             existing = self.connection.execute(
-                "SELECT evaluation_id, status FROM evaluations WHERE idempotency_key=?",
+                """SELECT evaluation_id, status, request_fingerprint, claim_expires_at,
+                   updated_at FROM evaluations WHERE idempotency_key=?""",
                 (idempotency_key,),
             ).fetchone()
+            if existing is not None:
+                if request_fingerprint != existing[2]:
+                    raise IdempotencyConflictError(
+                        "idempotency key was reused for a different request"
+                    )
+                stale_running = False
+                if existing[1] == "running":
+                    if existing[3]:
+                        stale_running = datetime.fromisoformat(str(existing[3])).astimezone(
+                            UTC
+                        ) <= datetime.now(UTC)
+                    else:
+                        updated = datetime.fromisoformat(str(existing[4])).astimezone(UTC)
+                        stale_running = (
+                            updated.timestamp() + EVALUATION_LEASE_SECONDS
+                            <= datetime.now(UTC).timestamp()
+                        )
+                if stale_running:
+                    self.connection.execute(
+                        "DELETE FROM evaluations WHERE idempotency_key=? AND evaluation_id=? "
+                        "AND status='running'",
+                        (idempotency_key, existing[0]),
+                    )
+                    existing = None
             # Failed placeholders are terminal but retryable.  Reclaim the
             # key atomically so a retry never inherits the old running row.
             if existing is not None and existing[1] == "failed":
@@ -729,13 +790,16 @@ class SQLiteAuditRepository:
                 )
             cursor = self.connection.execute(
                 """INSERT INTO evaluations
-                (evaluation_id,decision_id,status,idempotency_key,result,payload,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING""",
+                (evaluation_id,decision_id,status,idempotency_key,request_fingerprint,
+                 claim_expires_at,result,payload,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING""",
                 (
                     evaluation_id,
                     None,
                     "running",
                     idempotency_key,
+                    request_fingerprint,
+                    lease_expires_at,
                     None,
                     _json(item),
                     created_at,
@@ -831,76 +895,9 @@ class SQLiteAuditRepository:
         day = now.date()
         try:
             self.connection.execute("BEGIN IMMEDIATE")
-            # Reconcile abandoned leases before evaluating caps.  This runs
-            # under the same write lock as reservation, so stale pending rows
-            # cannot continue consuming capacity for another process.
-            pending_rows = self.connection.execute(
-                "SELECT receipt_id, playback, payload, created_at FROM audio_receipts"
-            ).fetchall()
-            for stale in pending_rows:
-                playback = json.loads(stale[1]) if stale[1] else {}
-                expiry = playback.get("reservation_expires_at")
-                if playback.get("status") != "pending":
-                    continue
-                if not expiry:
-                    # Rows written by an older release have no lease metadata;
-                    # derive a bounded compatibility lease from their audit
-                    # timestamp rather than allowing them to strand capacity.
-                    created_at = datetime.fromisoformat(str(stale[3])).astimezone(UTC)
-                    expiry = datetime.fromtimestamp(
-                        created_at.timestamp() + max(reservation_ttl_seconds, 1), UTC
-                    ).isoformat()
-                if datetime.fromisoformat(str(expiry)).astimezone(UTC) > now:
-                    continue
-                payload = cast(dict[str, Any], json.loads(stale[2]))
-                terminal = {
-                    **playback,
-                    "status": "released",
-                    "detail_code": "reservation_expired",
-                    "released_at": now.isoformat(),
-                }
-                payload.update(
-                    {
-                        "outcome": "suppressed",
-                        "reason_code": "reservation_expired",
-                        "playback": terminal,
-                        "created_at": now.isoformat(),
-                    }
-                )
-                max_attempt = self.connection.execute(
-                    "SELECT COALESCE(MAX(attempt_no), 0) FROM audio_receipt_attempts "
-                    "WHERE receipt_id=?",
-                    (stale[0],),
-                ).fetchone()
-                self.connection.execute(
-                    """UPDATE audio_receipts SET outcome=?, reason_code=?, playback=?,
-                    created_at=?, payload=? WHERE receipt_id=? AND playback=?""",
-                    (
-                        "suppressed",
-                        "reservation_expired",
-                        _json(terminal),
-                        now.isoformat(),
-                        _json(payload),
-                        stale[0],
-                        stale[1],
-                    ),
-                )
-                self.connection.execute(
-                    """INSERT INTO audio_receipt_attempts
-                    (receipt_id,attempt_no,decision_id,outcome,reason_code,command_id,playback,
-                     created_at,payload) VALUES (?,?,?,?,?,?,?,?,?)""",
-                    (
-                        stale[0],
-                        int(max_attempt[0]) + 1,
-                        payload["decision_id"],
-                        "suppressed",
-                        "reservation_expired",
-                        payload.get("command_id"),
-                        _json(terminal),
-                        now.isoformat(),
-                        _json(payload),
-                    ),
-                )
+            # An expired lease is deliberately not auto-released: the worker
+            # call may still be in flight. Keeping it pending fences a second
+            # command until the owner returns or an operator reconciles it.
             current = self.connection.execute(
                 "SELECT playback, payload FROM audio_receipts WHERE receipt_id=?",
                 (item["receipt_id"],),
@@ -925,7 +922,7 @@ class SQLiteAuditRepository:
             accepted: list[datetime] = []
             for row in rows:
                 playback = json.loads(row[1]) if row[1] is not None else {}
-                if playback.get("status") not in {"accepted", "pending"}:
+                if playback.get("status") not in {"accepted", "pending", "failed"}:
                     continue
                 accepted.append(datetime.fromisoformat(str(row[0])).astimezone(UTC))
             if (
@@ -1115,7 +1112,7 @@ class SQLiteAuditRepository:
             # still in flight, but it must not overwrite that sender's active
             # pending lease.  Only finalize_audio_receipt, with the matching
             # owner token, may transition pending to a terminal state.
-            preserve_terminal = current_status in {"accepted", "pending"}
+            preserve_terminal = current_status in {"accepted", "pending", "failed"}
             if current is None:
                 self.connection.execute(
                     """INSERT INTO audio_receipts

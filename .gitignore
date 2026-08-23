@@ -9,6 +9,7 @@ __pycache__/
 *.py[cod]
 dist/
 build/
+.build/
 *.egg-info/
 .env
 /models/

@@ -105,7 +105,7 @@ def test_service_calls_adapter_only_after_policy_and_records_retry_outcomes() ->
     assert saved["playback"]["status"] == "accepted"
 
 
-def test_failed_delivery_then_acceptance_is_latest_for_policy_history() -> None:
+def test_failed_delivery_is_terminal_safety_history_for_policy_limits() -> None:
     adapter = _FailOnceAudioController()
     repository = SQLiteAuditRepository()
     service = AudioRequestService(
@@ -114,11 +114,13 @@ def test_failed_delivery_then_acceptance_is_latest_for_policy_history() -> None:
         repository,
     )
     decision = _decision()
-    service.request(decision, camera_id="cam-1", zone_id="zone-a", now=datetime.now(UTC))
-    service.request(decision, camera_id="cam-1", zone_id="zone-a", now=datetime.now(UTC))
+    first = service.request(decision, camera_id="cam-1", zone_id="zone-a", now=datetime.now(UTC))
+    second = service.request(decision, camera_id="cam-1", zone_id="zone-a", now=datetime.now(UTC))
     latest = repository.get_audio_receipt(f"audio:{decision.decision_id}")
     assert latest is not None
-    assert latest["playback"]["status"] == "accepted"
+    assert first.allowed is False
+    assert second.reason_code.value == "zone_cooldown"
+    assert latest["playback"]["status"] == "failed"
     attempts = repository.connection.execute(
         "SELECT outcome, playback FROM audio_receipt_attempts "
         "WHERE receipt_id=? ORDER BY attempt_no",
@@ -127,7 +129,7 @@ def test_failed_delivery_then_acceptance_is_latest_for_policy_history() -> None:
     assert len(attempts) == 3
     assert attempts[0][1].find('"status":"pending"') >= 0
     assert attempts[1][1].find('"status":"failed"') >= 0
-    assert attempts[2][1].find('"status":"accepted"') >= 0
+    assert attempts[2][1] is None
 
 
 def test_controller_exception_finalizes_reservation_before_reraising() -> None:
@@ -146,7 +148,7 @@ def test_controller_exception_finalizes_reservation_before_reraising() -> None:
     assert saved["reason_code"] == "adapter_error"
 
 
-def test_pending_contender_cannot_clear_owner_and_stale_pending_is_released() -> None:
+def test_pending_contender_cannot_clear_owner_or_release_expired_lease() -> None:
     repository = SQLiteAuditRepository()
     now = datetime.now(UTC)
     first = repository.reserve_audio_receipt(
@@ -189,6 +191,8 @@ def test_pending_contender_cannot_clear_owner_and_stale_pending_is_released() ->
             "zone_id": "zone-b",
             "created_at": (now - timedelta(seconds=10)).isoformat(),
         },
+        hourly_audio_cap=1,
+        daily_audio_cap=1,
         reservation_ttl_seconds=1,
     )
     fresh = repository.reserve_audio_receipt(
@@ -199,9 +203,10 @@ def test_pending_contender_cannot_clear_owner_and_stale_pending_is_released() ->
             "zone_id": "zone-b",
             "created_at": now.isoformat(),
         },
+        hourly_audio_cap=1,
+        daily_audio_cap=1,
         reservation_ttl_seconds=30,
     )
     assert stale["playback"]["status"] == "pending"
-    assert fresh["playback"]["status"] == "pending"
-    assert repository.get_audio_receipt("audio:stale")["playback"]["status"] == "released"
-    assert repository.get_audio_receipt("audio:fresh")["playback"]["status"] == "pending"
+    assert fresh["reservation_status"] == "rejected"
+    assert repository.get_audio_receipt("audio:stale")["playback"]["status"] == "pending"

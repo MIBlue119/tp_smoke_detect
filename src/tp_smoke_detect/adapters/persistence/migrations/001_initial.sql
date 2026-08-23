@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS evaluations (
     decision_id UUID REFERENCES decisions(decision_id) ON DELETE CASCADE,
     status VARCHAR(16) NOT NULL,
     idempotency_key VARCHAR(255) UNIQUE,
+    request_fingerprint CHAR(64),
+    claim_expires_at TIMESTAMPTZ,
     result JSONB,
     payload JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),

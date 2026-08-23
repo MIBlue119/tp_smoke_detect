@@ -124,12 +124,19 @@ class AudioRequestService:
                         reservation_token=reservation_token,
                     )
                 raise
-            if receipt.status in {PlaybackStatus.REJECTED, PlaybackStatus.EXPIRED}:
+            if receipt.status in {
+                PlaybackStatus.FAILED,
+                PlaybackStatus.REJECTED,
+                PlaybackStatus.EXPIRED,
+            }:
+                reason_code = {
+                    PlaybackStatus.FAILED: AudioReasonCode.ADAPTER_ERROR,
+                    PlaybackStatus.REJECTED: AudioReasonCode.ADAPTER_REJECTED,
+                    PlaybackStatus.EXPIRED: AudioReasonCode.EXPIRED,
+                }[receipt.status]
                 result = AudioPolicyResult(
                     False,
-                    # Adapter detail codes are bounded by the port and kept as
-                    # a separate playback outcome for auditability.
-                    result.reason_code,
+                    reason_code,
                     "suppressed",
                     result.command,
                 )
