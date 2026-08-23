@@ -14,7 +14,9 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import tarfile
+import tempfile
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -76,11 +78,15 @@ def _safe_member(member: tarfile.TarInfo) -> None:
 
 def restore_backup(archive_path: Path, destination: Path) -> dict[str, object]:
     destination = destination.expanduser().resolve()
-    destination.mkdir(parents=True, exist_ok=True)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{destination.name}.restore-", dir=destination.parent))
     with tarfile.open(archive_path, "r:gz") as archive:
         members = archive.getmembers()
         for member in members:
             _safe_member(member)
+        names = [member.name for member in members]
+        if len(names) != len(set(names)):
+            raise ValueError("backup contains duplicate members")
         manifest_member = next((item for item in members if item.name == MANIFEST_NAME), None)
         if manifest_member is None:
             raise ValueError("backup manifest is missing")
@@ -93,18 +99,74 @@ def restore_backup(archive_path: Path, destination: Path) -> dict[str, object]:
             or manifest.get("schema_version") != "smoke-detect-backup.v1"
         ):
             raise ValueError("unsupported backup manifest")
+        entries = manifest.get("files")
+        if not isinstance(entries, list):
+            raise ValueError("backup manifest files must be a list")
+        expected: dict[str, tuple[int, str]] = {}
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise ValueError("backup manifest contains an invalid file entry")
+            name = entry.get("path")
+            digest = entry.get("sha256")
+            size = entry.get("size")
+            if (
+                not isinstance(name, str)
+                or name == MANIFEST_NAME
+                or not isinstance(digest, str)
+                or len(digest) != 64
+                or not isinstance(size, int)
+                or size < 0
+            ):
+                raise ValueError("backup manifest contains invalid inventory metadata")
+            if name in expected:
+                raise ValueError(f"backup manifest contains duplicate file: {name}")
+            _safe_member(tarfile.TarInfo(name))
+            expected[name] = (size, digest)
+        actual_members = {member.name for member in members if member.name != MANIFEST_NAME}
+        if actual_members != set(expected):
+            missing = sorted(set(expected) - actual_members)
+            unexpected = sorted(actual_members - set(expected))
+            raise ValueError(
+                f"backup inventory mismatch: missing={missing}, unexpected={unexpected}"
+            )
+        # Extract and verify everything in an isolated directory.  The live
+        # destination is untouched until every byte has passed the manifest.
         for member in members:
             if member.name == MANIFEST_NAME:
                 continue
-            target = (destination / member.name).resolve()
-            target.relative_to(destination)
+            target = (staging / member.name).resolve()
+            target.relative_to(staging)
             target.parent.mkdir(parents=True, exist_ok=True)
             stream = archive.extractfile(member)
             if stream is None:
                 raise ValueError(f"cannot read backup member: {member.name}")
-            with target.open("wb") as handle:
-                handle.write(stream.read())
+            content = stream.read()
+            size, digest = expected[member.name]
+            actual_digest = hashlib.sha256(content).hexdigest()
+            if len(content) != size or actual_digest != digest:
+                raise ValueError(f"backup integrity check failed: {member.name}")
+            target.write_bytes(content)
             os.chmod(target, member.mode & 0o777)
+    old_destination: Path | None = None
+    try:
+        if destination.exists():
+            old_destination = destination.parent / f".{destination.name}.previous-{os.getpid()}"
+            if old_destination.exists():
+                shutil.rmtree(old_destination)
+            os.replace(destination, old_destination)
+        os.replace(staging, destination)
+        staging = Path()
+        if old_destination is not None:
+            shutil.rmtree(old_destination)
+    except Exception:
+        if destination.exists() and old_destination is not None:
+            shutil.rmtree(destination)
+        if old_destination is not None and old_destination.exists():
+            os.replace(old_destination, destination)
+        raise
+    finally:
+        if staging != Path() and staging.exists():
+            shutil.rmtree(staging)
     return manifest
 
 

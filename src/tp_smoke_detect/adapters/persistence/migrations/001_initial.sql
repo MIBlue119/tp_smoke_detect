@@ -70,6 +70,7 @@ CREATE INDEX IF NOT EXISTS retention_audits_artifact_created
 
 CREATE TABLE IF NOT EXISTS evaluations (
     evaluation_id UUID PRIMARY KEY,
+    decision_id UUID REFERENCES decisions(decision_id) ON DELETE CASCADE,
     status VARCHAR(16) NOT NULL,
     idempotency_key VARCHAR(255) UNIQUE,
     result JSONB,
@@ -92,7 +93,7 @@ CREATE TABLE IF NOT EXISTS mutes (
 -- U8 immutable policy/playback receipt.  One decision has one audio outcome.
 CREATE TABLE IF NOT EXISTS audio_receipts (
     receipt_id VARCHAR(255) PRIMARY KEY,
-    decision_id UUID NOT NULL REFERENCES decisions(decision_id),
+    decision_id UUID NOT NULL REFERENCES decisions(decision_id) ON DELETE CASCADE,
     camera_id VARCHAR(128) NOT NULL,
     zone_id VARCHAR(128) NOT NULL,
     outcome VARCHAR(32) NOT NULL,
@@ -104,3 +105,19 @@ CREATE TABLE IF NOT EXISTS audio_receipts (
 );
 CREATE INDEX IF NOT EXISTS audio_receipts_zone_created
     ON audio_receipts(zone_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS audio_receipt_attempts (
+    attempt_id BIGSERIAL PRIMARY KEY,
+    receipt_id VARCHAR(255) NOT NULL REFERENCES audio_receipts(receipt_id) ON DELETE CASCADE,
+    attempt_no INTEGER NOT NULL,
+    decision_id UUID NOT NULL REFERENCES decisions(decision_id) ON DELETE CASCADE,
+    outcome VARCHAR(32) NOT NULL,
+    reason_code VARCHAR(64) NOT NULL,
+    command_id UUID,
+    playback JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    payload JSONB NOT NULL,
+    UNIQUE (receipt_id, attempt_no)
+);
+CREATE INDEX IF NOT EXISTS audio_receipt_attempts_receipt
+    ON audio_receipt_attempts(receipt_id, attempt_no DESC);
