@@ -81,7 +81,10 @@ class ReplayManifest:
     camera_id: str
     camera_config_revision: str
     frames: tuple[ReplayFrame, ...]
-    recording_id: str = "manifest"
+    # ``None`` is the legacy sentinel.  A concrete value is always an
+    # explicitly supplied recording identity, including for direct public
+    # dataclass construction (not only ``from_mapping``).
+    recording_id: str | None = None
     source_fps: float = 30.0
     capture_start_ts_ns: int = 0
     recording_id_explicit: bool = field(default=False, repr=False, compare=False)
@@ -97,12 +100,11 @@ class ReplayManifest:
             explicit_recording_id = value.get("source_id")
         recording_id_explicit = explicit_recording_id is not None
         if explicit_recording_id is None:
-            # Keep legacy manifests deterministic while separating distinct
-            # zero-based recordings. Explicit recording_id is preferred when
-            # a recorder can provide a durable source identity.
-            encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
-            explicit_recording_id = f"manifest-{sha256(encoded.encode()).hexdigest()[:24]}"
-        recording_id = _required_text({"recording_id": explicit_recording_id}, "recording_id")
+            # Leave the legacy sentinel absent. ReplayWorker derives a
+            # content-scoped identity after reading the referenced artifacts.
+            recording_id: str | None = None
+        else:
+            recording_id = _required_text({"recording_id": explicit_recording_id}, "recording_id")
         raw_frames = value.get("frames")
         if not isinstance(raw_frames, Sequence) or isinstance(raw_frames, (str, bytes, bytearray)):
             raise ValueError("manifest frames must be a list")
@@ -279,8 +281,9 @@ class ReplayWorker:
         bind the resulting digest to the normalized manifest metadata.
         """
 
-        if manifest.recording_id_explicit:
-            return manifest
+        if manifest.recording_id is not None:
+            recording_id = _required_text({"recording_id": manifest.recording_id}, "recording_id")
+            return replace(manifest, recording_id=recording_id, recording_id_explicit=True)
         artifact_digests: dict[str, str] = {}
         for frame in manifest.frames:
             if frame.artifact_id in artifact_digests:

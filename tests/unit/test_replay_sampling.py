@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from tp_smoke_detect.adapters.artifacts.local import LocalArtifactStore
-from tp_smoke_detect.application.replay import ReplayWorker, synthetic_camera
+from tp_smoke_detect.application.replay import ReplayManifest, ReplayWorker, synthetic_camera
 
 PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + (b"\x00" * 17)
 
@@ -70,6 +70,32 @@ def test_replay_event_identity_includes_recording_identity(tmp_path: Path) -> No
     assert first.candidates[0].event_id != second.candidates[0].event_id
     assert first.candidates[0].correlation_id != second.candidates[0].correlation_id
     assert first.candidates[0].event_id == repeat.candidates[0].event_id
+
+
+def test_direct_manifests_preserve_explicit_recording_identity(tmp_path: Path) -> None:
+    store = _store(tmp_path, "f0.png")
+    frame = ReplayManifest.from_mapping(
+        {"camera_id": "cam-1", "frames": [_frame(0, 0, "f0.png")]}
+    ).frames[0]
+    first = ReplayWorker(synthetic_camera(), store).replay(
+        ReplayManifest(
+            camera_id="cam-1",
+            camera_config_revision="cam-1-r1",
+            frames=(frame,),
+            recording_id="recording-a",
+        )
+    )
+    second = ReplayWorker(synthetic_camera(), store).replay(
+        ReplayManifest(
+            camera_id="cam-1",
+            camera_config_revision="cam-1-r1",
+            frames=(frame,),
+            recording_id="recording-b",
+        )
+    )
+
+    assert first.candidates[0].event_id != second.candidates[0].event_id
+    assert first.candidates[0].correlation_id != second.candidates[0].correlation_id
 
 
 def test_legacy_replay_identity_includes_artifact_content(tmp_path: Path) -> None:
