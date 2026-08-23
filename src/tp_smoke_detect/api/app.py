@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, cast
@@ -107,6 +108,7 @@ def create_app(
     app.state.artifact_root = root
     app.state.settings = app_settings
     app.state.audio_controller = audio_controller or FakeAudioController()
+    app.state.audio_locks = {}
     app.state.metrics = OperationalMetrics()
     app.state.health = HealthRegistry(app.state.metrics)
     app.state.health.set_component("database", HealthState.HEALTHY)
@@ -219,13 +221,19 @@ def create_app(
         repository: Repo,
         idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
     ) -> EvaluationResponse:
-        if idempotency_key:
-            existing = repository.get_evaluation_by_idempotency(idempotency_key)
-            if existing:
-                return _evaluation_response(existing)
         if request.artifact_id and repository.get_artifact(request.artifact_id) is None:
             raise HTTPException(status_code=404, detail="artifact not found")
         evaluation_id = uuid4()
+        if idempotency_key:
+            claim = getattr(repository, "claim_evaluation", None)
+            if claim is not None:
+                existing = claim(str(evaluation_id), idempotency_key, request.camera_id)
+                if existing is not None:
+                    return _evaluation_response(existing)
+            else:
+                existing = repository.get_evaluation_by_idempotency(idempotency_key)
+                if existing:
+                    return _evaluation_response(existing)
         decision = _decision_for_evaluation(request)
         # Persisting a completed deterministic result makes the CPU replay path
         # pollable while a future worker can replace this with running status.
@@ -314,80 +322,91 @@ def create_app(
         if camera is None or not camera.get("zone_id"):
             raise HTTPException(status_code=409, detail="camera profile with zone_id is required")
         zone_id = str(camera["zone_id"])
-        policy_settings = app.state.settings.policy
-        quiet_hours = None
-        if (
-            policy_settings.quiet_hours_start is not None
-            and policy_settings.quiet_hours_end is not None
-        ):
-            quiet_hours = (policy_settings.quiet_hours_start, policy_settings.quiet_hours_end)
-        current_mode = repository.current_mode()
-        mode = policy_settings.mode
-        if current_mode and current_mode.get("mode") in {item.value for item in RunMode}:
-            mode = RunMode(str(current_mode["mode"]))
-        policy = AudioPolicy(
-            AudioPolicyConfig(
-                mode=mode,
-                audio_muted=policy_settings.audio_muted,
-                cooldown_seconds=policy_settings.cooldown_seconds,
-                hourly_audio_cap=policy_settings.hourly_audio_cap,
-                daily_audio_cap=policy_settings.daily_audio_cap,
-                quiet_hours=quiet_hours,
-                policy_revision=policy_settings.policy_revision,
-                message_id=policy_settings.audio_message_id,
-                command_ttl_seconds=policy_settings.audio_command_ttl_seconds,
+
+        def perform() -> dict[str, object]:
+            policy_settings = app.state.settings.policy
+            quiet_hours = None
+            if (
+                policy_settings.quiet_hours_start is not None
+                and policy_settings.quiet_hours_end is not None
+            ):
+                quiet_hours = (policy_settings.quiet_hours_start, policy_settings.quiet_hours_end)
+            current_mode = repository.current_mode()
+            mode = policy_settings.mode
+            if current_mode and current_mode.get("mode") in {item.value for item in RunMode}:
+                mode = RunMode(str(current_mode["mode"]))
+            policy = AudioPolicy(
+                AudioPolicyConfig(
+                    mode=mode,
+                    audio_muted=policy_settings.audio_muted,
+                    cooldown_seconds=policy_settings.cooldown_seconds,
+                    hourly_audio_cap=policy_settings.hourly_audio_cap,
+                    daily_audio_cap=policy_settings.daily_audio_cap,
+                    quiet_hours=quiet_hours,
+                    policy_revision=policy_settings.policy_revision,
+                    message_id=policy_settings.audio_message_id,
+                    command_ttl_seconds=policy_settings.audio_command_ttl_seconds,
+                )
             )
-        )
-        # Time and routing context are server-controlled.  Never accept a
-        # caller timestamp or zone because both can bypass policy limits.
-        now = _utc_now()
-        active_mutes = [
-            mute
-            for mute in repository.list_mutes()
-            if mute.get("expires_at") is None
-            or datetime.fromisoformat(str(mute["expires_at"])) > now
-        ]
-        site_muted = any(mute.get("scope") == "site" for mute in active_mutes)
-        zone_muted = any(
-            mute.get("scope") == "zone" and mute.get("scope_id") == zone_id for mute in active_mutes
-        )
-        camera_muted = any(
-            mute.get("scope") == "camera" and mute.get("scope_id") == camera_id
-            for mute in active_mutes
-        )
-        receipts = repository.list_audio_receipts(zone_id=zone_id)
-        accepted = [
-            item for item in receipts if (item.get("playback") or {}).get("status") == "accepted"
-        ]
-        announced_at = tuple(datetime.fromisoformat(str(item["created_at"])) for item in accepted)
-        hour_start = now.timestamp() - 3600
-        hourly_count = sum(
-            datetime.fromisoformat(str(item["created_at"])).timestamp() >= hour_start
-            for item in accepted
-        )
-        daily_count = sum(
-            datetime.fromisoformat(str(item["created_at"])).date() == now.date()
-            for item in accepted
-        )
-        result = AudioRequestService(policy, app.state.audio_controller, repository).request(
-            decision,
-            camera_id=camera_id,
-            zone_id=zone_id,
-            now=now,
-            announced_at=announced_at,
-            hourly_count=hourly_count,
-            daily_count=daily_count,
-            site_muted=site_muted,
-            zone_muted=zone_muted,
-            camera_muted=camera_muted,
-            camera_suspended=repository.false_announcement_count(camera_id) > 0,
-        )
-        return {
-            "decision_id": str(request.decision_id),
-            "outcome": result.outcome,
-            "reason_code": result.reason_code.value,
-            "command": result.command.model_dump(mode="json") if result.command else None,
-        }
+            # Time and routing context are server-controlled.  Never accept a
+            # caller timestamp or zone because both can bypass policy limits.
+            now = _utc_now()
+            active_mutes = [
+                mute
+                for mute in repository.list_mutes()
+                if mute.get("expires_at") is None
+                or datetime.fromisoformat(str(mute["expires_at"])).astimezone(UTC) > now
+            ]
+            site_muted = any(mute.get("scope") == "site" for mute in active_mutes)
+            zone_muted = any(
+                mute.get("scope") == "zone" and mute.get("scope_id") == zone_id
+                for mute in active_mutes
+            )
+            camera_muted = any(
+                mute.get("scope") == "camera" and mute.get("scope_id") == camera_id
+                for mute in active_mutes
+            )
+            receipts = repository.list_audio_receipts(zone_id=zone_id)
+            accepted = [
+                item
+                for item in receipts
+                if (item.get("playback") or {}).get("status") in {"accepted", "pending"}
+            ]
+            announced_at = tuple(
+                datetime.fromisoformat(str(item["created_at"])).astimezone(UTC) for item in accepted
+            )
+            hour_start = now.timestamp() - 3600
+            hourly_count = sum(
+                datetime.fromisoformat(str(item["created_at"])).timestamp() >= hour_start
+                for item in accepted
+            )
+            daily_count = sum(
+                datetime.fromisoformat(str(item["created_at"])).date() == now.date()
+                for item in accepted
+            )
+            result = AudioRequestService(policy, app.state.audio_controller, repository).request(
+                decision,
+                camera_id=camera_id,
+                zone_id=zone_id,
+                now=now,
+                announced_at=announced_at,
+                hourly_count=hourly_count,
+                daily_count=daily_count,
+                site_muted=site_muted,
+                zone_muted=zone_muted,
+                camera_muted=camera_muted,
+                camera_suspended=repository.false_announcement_count(camera_id) > 0,
+            )
+            return {
+                "decision_id": str(request.decision_id),
+                "outcome": result.outcome,
+                "reason_code": result.reason_code.value,
+                "command": result.command.model_dump(mode="json") if result.command else None,
+            }
+
+        zone_lock = app.state.audio_locks.setdefault(zone_id, threading.RLock())
+        with zone_lock:
+            return perform()
 
     @app.get("/v1/models", tags=["models"])
     def models(repository: Repo) -> list[dict[str, object]]:

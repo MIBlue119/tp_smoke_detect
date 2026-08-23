@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import time
 from pathlib import Path
@@ -93,7 +94,7 @@ def _merge_mapping(target: dict[str, Any], source: dict[str, Any]) -> None:
             target[key] = value
 
 
-def _set_nested(mapping: dict[str, Any], keys: list[str], value: str) -> None:
+def _set_nested(mapping: dict[str, Any], keys: list[str], value: Any) -> None:
     current = mapping
     for key in keys[:-1]:
         next_value = current.get(key)
@@ -125,7 +126,15 @@ def _environment_overrides(document: dict[str, Any]) -> dict[str, Any]:
         keys = [part.lower() for part in suffix.split("__")]
         if keys[0] not in known:
             continue
-        _set_nested(document, keys, raw_value)
+        value: Any = raw_value
+        # Preserve BaseSettings' JSON decoding for top-level complex fields
+        # while retaining scalar coercion for nested values.
+        if len(keys) == 1 and keys[0] in {"policy", "cameras"}:
+            try:
+                value = json.loads(raw_value)
+            except json.JSONDecodeError:
+                value = raw_value
+        _set_nested(document, keys, value)
     return document
 
 

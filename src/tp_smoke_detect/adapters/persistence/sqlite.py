@@ -42,12 +42,27 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
+_BOOLEAN_KEYS = frozenset({"active", "audio_eligibility", "deleted", "enabled"})
+
+
+def _normalize_persisted(value: Any, *, key: str | None = None) -> Any:
+    """Restore JSON/SQLite booleans as real booleans at the repository edge."""
+
+    if key in _BOOLEAN_KEYS and isinstance(value, (bool, int)):
+        return bool(value)
+    if isinstance(value, dict):
+        return {name: _normalize_persisted(item, key=name) for name, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_persisted(item) for item in value]
+    return value
+
+
 def _decode(row: sqlite3.Row) -> dict[str, Any]:
     item = dict(row)
     for key in ("payload", "reason_codes", "evidence_channels", "model_revisions", "result"):
         if key in item and item[key] is not None:
-            item[key] = json.loads(item[key])
-    return item
+            item[key] = _normalize_persisted(json.loads(item[key]))
+    return cast(dict[str, Any], _normalize_persisted(item))
 
 
 class SQLiteAuditRepository:
@@ -353,7 +368,7 @@ class SQLiteAuditRepository:
         row = self.connection.execute(
             "SELECT payload FROM cameras WHERE camera_id = ?", (camera_id,)
         ).fetchone()
-        return json.loads(row[0]) if row else None
+        return cast(dict[str, Any], _normalize_persisted(json.loads(row[0]))) if row else None
 
     @_synchronized
     def put_artifact(self, artifact: dict[str, Any]) -> dict[str, Any]:
@@ -548,25 +563,44 @@ class SQLiteAuditRepository:
                 decision_id = nested.get("decision_id")
         item["decision_id"] = str(decision_id) if decision_id is not None else None
         with self.connection:
-            # The unique idempotency key is claimed in the same write as the
-            # evaluation.  A concurrent retry therefore returns the original
-            # record instead of raising or creating a second evaluation.
-            self.connection.execute(
-                """INSERT INTO evaluations
-                (evaluation_id,decision_id,status,idempotency_key,result,payload,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?)
-                ON CONFLICT(idempotency_key) DO NOTHING""",
-                (
-                    item["evaluation_id"],
-                    item["decision_id"],
-                    item["status"],
-                    item.get("idempotency_key"),
-                    _json(result) if result is not None else None,
-                    _json(item),
-                    item["created_at"],
-                    item["updated_at"],
-                ),
-            )
+            existing = self.connection.execute(
+                "SELECT evaluation_id, idempotency_key FROM evaluations WHERE evaluation_id=?",
+                (item["evaluation_id"],),
+            ).fetchone()
+            if existing is not None:
+                # Complete the placeholder created by claim_evaluation.  A
+                # different idempotency key must never overwrite that claim.
+                if existing[1] == item.get("idempotency_key"):
+                    self.connection.execute(
+                        """UPDATE evaluations SET decision_id=?, status=?, result=?, payload=?,
+                        updated_at=? WHERE evaluation_id=?""",
+                        (
+                            item["decision_id"],
+                            item["status"],
+                            _json(result) if result is not None else None,
+                            _json(item),
+                            item["updated_at"],
+                            item["evaluation_id"],
+                        ),
+                    )
+            else:
+                # The unique idempotency key is claimed in the same write as
+                # the evaluation for callers that do not use claim_evaluation.
+                self.connection.execute(
+                    """INSERT INTO evaluations
+                    (evaluation_id,decision_id,status,idempotency_key,result,payload,created_at,updated_at)
+                    VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING""",
+                    (
+                        item["evaluation_id"],
+                        item["decision_id"],
+                        item["status"],
+                        item.get("idempotency_key"),
+                        _json(result) if result is not None else None,
+                        _json(item),
+                        item["created_at"],
+                        item["updated_at"],
+                    ),
+                )
             row = self.connection.execute(
                 "SELECT evaluation_id FROM evaluations WHERE evaluation_id=? "
                 "OR (idempotency_key IS NOT NULL AND idempotency_key=?)",
@@ -604,9 +638,54 @@ class SQLiteAuditRepository:
         return self.get_evaluation(row[0]) if row else None
 
     @_synchronized
+    def claim_evaluation(
+        self, evaluation_id: str, idempotency_key: str, camera_id: str
+    ) -> dict[str, Any] | None:
+        """Claim an idempotency key before any decision side effect.
+
+        ``None`` means this caller won the claim.  A returned evaluation is the
+        already-winning request, including its temporary ``running`` state.
+        """
+
+        created_at = _now()
+        item = {
+            "evaluation_id": evaluation_id,
+            "status": "running",
+            "result": None,
+            "idempotency_key": idempotency_key,
+            "camera_id": camera_id,
+            "created_at": created_at,
+            "updated_at": created_at,
+        }
+        with self.connection:
+            cursor = self.connection.execute(
+                """INSERT INTO evaluations
+                (evaluation_id,decision_id,status,idempotency_key,result,payload,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO NOTHING""",
+                (
+                    evaluation_id,
+                    None,
+                    "running",
+                    idempotency_key,
+                    None,
+                    _json(item),
+                    created_at,
+                    created_at,
+                ),
+            )
+        if cursor.rowcount == 1:
+            return None
+        return cast(dict[str, Any] | None, self.get_evaluation_by_idempotency(idempotency_key))
+
+    @_synchronized
     def put_mute(self, mute: dict[str, Any]) -> dict[str, Any]:
         item = dict(mute)
         item.setdefault("created_at", _now())
+        if item.get("expires_at") is not None:
+            expiry = datetime.fromisoformat(str(item["expires_at"]))
+            if expiry.tzinfo is None:
+                raise ValueError("mute expires_at must include a timezone")
+            item["expires_at"] = expiry.astimezone(UTC).isoformat()
         self.connection.execute(
             """INSERT INTO mutes
             (mute_id,scope,scope_id,expires_at,actor,reason,created_at,payload)
@@ -630,7 +709,31 @@ class SQLiteAuditRepository:
         rows = self.connection.execute(
             "SELECT payload FROM mutes ORDER BY created_at DESC"
         ).fetchall()
-        return [json.loads(row[0]) for row in rows]
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = cast(dict[str, Any], _normalize_persisted(json.loads(row[0])))
+            if item.get("expires_at") is not None:
+                expiry = datetime.fromisoformat(str(item["expires_at"]))
+                if expiry.tzinfo is None:
+                    # Legacy rows predating the aware-datetime boundary are
+                    # interpreted as UTC at the read boundary.
+                    expiry = expiry.replace(tzinfo=UTC)
+                item["expires_at"] = expiry.astimezone(UTC).isoformat()
+            result.append(item)
+        return result
+
+    @_synchronized
+    def reserve_audio_receipt(self, receipt: dict[str, Any]) -> dict[str, Any]:
+        """Durably reserve a policy-approved playback before adapter I/O."""
+
+        item = dict(receipt)
+        item.setdefault("created_at", _now())
+        item["outcome"] = "reserved"
+        item["reason_code"] = "reserved"
+        item["playback"] = {"status": "pending"}
+        if self.get_audio_receipt(str(item["receipt_id"])) is not None:
+            return cast(dict[str, Any], self.get_audio_receipt(str(item["receipt_id"])))
+        return cast(dict[str, Any], self.put_audio_receipt(item))
 
     @_synchronized
     def put_audio_receipt(self, receipt: dict[str, Any]) -> dict[str, Any]:
@@ -646,7 +749,8 @@ class SQLiteAuditRepository:
             ).fetchone()
             attempt_no = int(existing[0]) + 1 if existing else 1
             current = self.connection.execute(
-                "SELECT 1 FROM audio_receipts WHERE receipt_id=?", (item["receipt_id"],)
+                "SELECT playback, payload FROM audio_receipts WHERE receipt_id=?",
+                (item["receipt_id"],),
             ).fetchone()
             values = (
                 item["decision_id"],
@@ -659,6 +763,13 @@ class SQLiteAuditRepository:
                 item["created_at"],
                 _json(item),
             )
+            current_status = None
+            if current is not None and current[0] is not None:
+                current_status = json.loads(current[0]).get("status")
+            # Once playback has been accepted, that fact is immutable safety
+            # history.  A later duplicate/rejection is still appended below,
+            # but must not downgrade the row used for caps and cooldowns.
+            preserve_accepted = current_status == "accepted"
             if current is None:
                 self.connection.execute(
                     """INSERT INTO audio_receipts
@@ -666,7 +777,7 @@ class SQLiteAuditRepository:
                      playback,created_at,payload) VALUES (?,?,?,?,?,?,?,?,?,?)""",
                     (item["receipt_id"], *values),
                 )
-            else:
+            elif not preserve_accepted:
                 self.connection.execute(
                     """UPDATE audio_receipts SET decision_id=?, camera_id=?, zone_id=?,
                     outcome=?, reason_code=?, command_id=?, playback=?, created_at=?, payload=?
@@ -696,7 +807,7 @@ class SQLiteAuditRepository:
         row = self.connection.execute(
             "SELECT payload FROM audio_receipts WHERE receipt_id=?", (receipt_id,)
         ).fetchone()
-        return json.loads(row[0]) if row else None
+        return cast(dict[str, Any], _normalize_persisted(json.loads(row[0]))) if row else None
 
     @_synchronized
     def list_audio_receipts(

@@ -8,9 +8,17 @@
       "type": "string"
     },
     "correlation_id": {
-      "format": "uuid",
-      "title": "Correlation Id",
-      "type": "string"
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
     },
     "decision_id": {
       "format": "uuid",
@@ -18,9 +26,17 @@
       "type": "string"
     },
     "event_id": {
-      "format": "uuid",
-      "title": "Event Id",
-      "type": "string"
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Id"
     },
     "expires_at": {
       "format": "date-time",
@@ -34,9 +50,17 @@
       "type": "string"
     },
     "occurred_at": {
-      "format": "date-time",
-      "title": "Occurred At",
-      "type": "string"
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Occurred At"
     },
     "policy_revision": {
       "maxLength": 128,
@@ -45,6 +69,7 @@
       "type": "string"
     },
     "producer": {
+      "default": "unknown",
       "maxLength": 128,
       "minLength": 1,
       "title": "Producer",
@@ -70,10 +95,6 @@
     }
   },
   "required": [
-    "event_id",
-    "correlation_id",
-    "producer",
-    "occurred_at",
     "command_id",
     "decision_id",
     "zone_id",

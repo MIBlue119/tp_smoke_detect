@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -74,15 +75,25 @@ def test_service_calls_adapter_only_after_policy_and_records_retry_outcomes() ->
     assert len(adapter.commands) == 1
     latest = repository.get_audio_receipt(f"audio:{decision.decision_id}")
     assert latest is not None
-    assert latest["playback"]["status"] == "duplicate"
+    # Accepted playback is immutable safety history; the retry is retained in
+    # audio_receipt_attempts without erasing cap/cooldown evidence.
+    assert latest["playback"]["status"] == "accepted"
+    attempt_statuses = [
+        json.loads(row["playback"])["status"]
+        for row in repository.connection.execute(
+            "SELECT playback FROM audio_receipt_attempts ORDER BY attempt_no"
+        ).fetchall()
+    ]
+    assert attempt_statuses == ["pending", "accepted", "duplicate"]
     attempts = repository.connection.execute(
         "SELECT attempt_no, outcome FROM audio_receipt_attempts WHERE receipt_id=? "
         "ORDER BY attempt_no",
         (f"audio:{decision.decision_id}",),
     ).fetchall()
     assert [(row[0], row[1]) for row in attempts] == [
-        (1, "announce_requested"),
+        (1, "reserved"),
         (2, "announce_requested"),
+        (3, "announce_requested"),
     ]
     assert saved["playback"]["status"] == "accepted"
 
@@ -106,6 +117,7 @@ def test_failed_delivery_then_acceptance_is_latest_for_policy_history() -> None:
         "WHERE receipt_id=? ORDER BY attempt_no",
         (f"audio:{decision.decision_id}",),
     ).fetchall()
-    assert len(attempts) == 2
-    assert attempts[0][1].find('"status":"failed"') >= 0
-    assert attempts[1][1].find('"status":"accepted"') >= 0
+    assert len(attempts) == 3
+    assert attempts[0][1].find('"status":"pending"') >= 0
+    assert attempts[1][1].find('"status":"failed"') >= 0
+    assert attempts[2][1].find('"status":"accepted"') >= 0

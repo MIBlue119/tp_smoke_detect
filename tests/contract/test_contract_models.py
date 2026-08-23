@@ -97,8 +97,8 @@ def test_contract_rejects_unknown_fields() -> None:
         CandidateEnvelope.model_validate({**candidate().model_dump(), "raw_pixels": "secret"})
 
 
-def test_v1_envelopes_require_delivery_metadata() -> None:
+def test_v1_envelopes_accept_legacy_payload_without_delivery_metadata() -> None:
     payload = candidate().model_dump(mode="json")
     payload.pop("event_id")
-    with pytest.raises(ValidationError, match="event_id"):
-        CandidateEnvelope.model_validate(payload)
+    parsed = CandidateEnvelope.model_validate(payload)
+    assert parsed.event_id is None

@@ -153,3 +153,19 @@ def test_restore_rejects_tampering_before_publishing_destination(tmp_path: Path)
         raise AssertionError("tampered backup was accepted")
     assert (destination / "keep.txt").read_text() == "untouched"
     assert not (destination / "config.json").exists()
+    assert list(tmp_path.glob(".live.restore-*")) == []
+
+
+def test_restore_cleans_staging_when_archive_is_missing(tmp_path: Path) -> None:
+    backup = _backup_module()
+    destination = tmp_path / "live"
+    destination.mkdir()
+
+    try:
+        backup.restore_backup(tmp_path / "missing.tar.gz", destination)
+    except (FileNotFoundError, tarfile.ReadError):
+        pass
+    else:
+        raise AssertionError("missing backup was accepted")
+
+    assert list(tmp_path.glob(".live.restore-*")) == []

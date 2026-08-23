@@ -1,14 +1,21 @@
 import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from uuid import uuid4
 
 from tp_smoke_detect.adapters.persistence.sqlite import SQLiteAuditRepository
 from tp_smoke_detect.api.app import create_app
+from tp_smoke_detect.contracts import RunMode
 from tp_smoke_detect.settings import AppSettings, PolicySettings
 
 
-def _asgi_json(app: Any, path: str, payload: dict[str, object]) -> tuple[int, dict[str, Any]]:
+def _asgi_json(
+    app: Any,
+    path: str,
+    payload: dict[str, object],
+    extra_headers: list[tuple[bytes, bytes]] | None = None,
+) -> tuple[int, dict[str, Any]]:
     """Issue a real ASGI request without adding an HTTP client dependency."""
 
     body = json.dumps(payload).encode()
@@ -35,7 +42,11 @@ def _asgi_json(app: Any, path: str, payload: dict[str, object]) -> tuple[int, di
                 "path": path,
                 "raw_path": path.encode(),
                 "query_string": b"",
-                "headers": [(b"host", b"test"), (b"content-type", b"application/json")],
+                "headers": [
+                    (b"host", b"test"),
+                    (b"content-type", b"application/json"),
+                    *(extra_headers or []),
+                ],
                 "server": ("test", 80),
                 "client": ("test", 1),
             },
@@ -116,6 +127,109 @@ def test_audio_request_api_uses_persisted_camera_zone_and_policy_eligibility() -
     status, response = _asgi_json(app, "/v1/audio/requests", {"decision_id": decision_id})
     assert status == 201
     assert response["reason_code"] == "audio_muted"
+
+
+def test_audio_request_api_allows_persisted_eligible_decision() -> None:
+    repository = SQLiteAuditRepository()
+    decision_id = str(uuid4())
+    decision = _decision(decision_id)
+    decision.update({"mode": "automatic", "audio_eligibility": True})
+    repository.put_decision(decision)
+    repository.upsert_camera(
+        {"camera_id": "cam-1", "zone_id": "persisted-zone", "revision": "r1", "active": True}
+    )
+    app = create_app(
+        repository,
+        settings=AppSettings(
+            policy=PolicySettings(mode=RunMode.AUTOMATIC, audio_muted=False, cooldown_seconds=600),
+            cameras=[],
+        ),
+    )
+
+    status, response = _asgi_json(app, "/v1/audio/requests", {"decision_id": decision_id})
+
+    assert status == 201
+    assert response["reason_code"] == "announced"
+    assert len(app.state.audio_controller.commands) == 1
+
+
+def test_concurrent_audio_requests_respect_zone_cooldown() -> None:
+    repository = SQLiteAuditRepository()
+    decision_ids = [str(uuid4()), str(uuid4())]
+    for decision_id in decision_ids:
+        decision = _decision(decision_id)
+        decision.update({"mode": "automatic", "audio_eligibility": True})
+        repository.put_decision(decision)
+    repository.upsert_camera(
+        {"camera_id": "cam-1", "zone_id": "shared-zone", "revision": "r1", "active": True}
+    )
+    app = create_app(
+        repository,
+        settings=AppSettings(
+            policy=PolicySettings(mode=RunMode.AUTOMATIC, audio_muted=False, cooldown_seconds=600),
+            cameras=[],
+        ),
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(
+            pool.map(
+                lambda decision_id: _asgi_json(
+                    app, "/v1/audio/requests", {"decision_id": decision_id}
+                ),
+                decision_ids,
+            )
+        )
+
+    assert sorted(response[1]["reason_code"] for response in responses) == [
+        "announced",
+        "zone_cooldown",
+    ]
+    assert len(app.state.audio_controller.commands) == 1
+
+
+def test_concurrent_evaluation_retries_claim_before_decision_side_effect() -> None:
+    repository = SQLiteAuditRepository()
+    app = create_app(repository, settings=AppSettings(cameras=[]))
+    key = b"same-evaluation"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(
+            pool.map(
+                lambda _: _asgi_json(
+                    app,
+                    "/v1/evaluations",
+                    {"camera_id": "cam-1", "mode": "replay"},
+                    [(b"idempotency-key", key)],
+                ),
+                range(2),
+            )
+        )
+
+    evaluation_ids = {response[1]["evaluation_id"] for response in responses}
+    assert len(evaluation_ids) == 1
+    assert repository.connection.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0] == 1
+    assert repository.connection.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 1
+
+
+def test_audio_mute_rejects_naive_expiry_before_persisting() -> None:
+    repository = SQLiteAuditRepository()
+    app = create_app(repository, settings=AppSettings(cameras=[]))
+
+    status, response = _asgi_json(
+        app,
+        "/v1/audio/mute",
+        {
+            "scope": "site",
+            "expires_at": "2099-01-01T00:00:00",
+            "reason": "maintenance",
+            "actor": "operator",
+        },
+    )
+
+    assert status == 422
+    assert "timezone" in json.dumps(response)
+    assert repository.list_mutes() == []
 
 
 def test_idempotent_evaluation_lookup_returns_same_record() -> None:

@@ -3,8 +3,9 @@
 The contracts intentionally contain features and references, never raw pixels or
 free-form model prose.  Additive changes to v1 must keep existing fields and enum
 values valid; breaking changes require a new versioned module and schema directory.
-Delivery metadata is required on every emitted v1 envelope; consumers that need to
-read pre-metadata records must migrate them at the boundary rather than republish them.
+Delivery metadata is emitted by all current producers.  The v1 ingestion models
+keep these fields optional so older JSON fixtures and replay records remain
+readable; producers must continue to populate them on newly emitted envelopes.
 """
 
 from __future__ import annotations
@@ -51,10 +52,10 @@ class RunMode(StrEnum):
 class EventMetadata(ContractModel):
     """Delivery identity shared by every broker-visible v1 envelope."""
 
-    event_id: UUID
-    correlation_id: UUID
-    producer: str = Field(min_length=1, max_length=128)
-    occurred_at: datetime
+    event_id: UUID | None = None
+    correlation_id: UUID | None = None
+    producer: str = Field(default="unknown", min_length=1, max_length=128)
+    occurred_at: datetime | None = None
 
 
 class Point(ContractModel):
@@ -155,10 +156,10 @@ class DecisionCompleted(ContractModel):
     """The ``decision.completed.v1`` message represented as JSON."""
 
     schema_version: Literal["decision.completed.v1"] = "decision.completed.v1"
-    event_id: UUID
-    correlation_id: UUID
-    producer: str = Field(min_length=1, max_length=128)
-    occurred_at: datetime
+    event_id: UUID | None = None
+    correlation_id: UUID | None = None
+    producer: str = Field(default="unknown", min_length=1, max_length=128)
+    occurred_at: datetime | None = None
     decision_id: UUID
     camera_id: str = Field(min_length=1, max_length=128)
     track_id: str = Field(min_length=1, max_length=128)

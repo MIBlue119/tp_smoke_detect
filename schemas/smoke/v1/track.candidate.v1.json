@@ -356,14 +356,30 @@
       "type": "integer"
     },
     "correlation_id": {
-      "format": "uuid",
-      "title": "Correlation Id",
-      "type": "string"
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
     },
     "event_id": {
-      "format": "uuid",
-      "title": "Event Id",
-      "type": "string"
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Id"
     },
     "first_seen_at": {
       "format": "date-time",
@@ -382,11 +398,20 @@
       "$ref": "#/$defs/Observations"
     },
     "occurred_at": {
-      "format": "date-time",
-      "title": "Occurred At",
-      "type": "string"
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Occurred At"
     },
     "producer": {
+      "default": "unknown",
       "maxLength": 128,
       "minLength": 1,
       "title": "Producer",
@@ -422,10 +447,6 @@
     }
   },
   "required": [
-    "event_id",
-    "correlation_id",
-    "producer",
-    "occurred_at",
     "camera_id",
     "track_id",
     "camera_config_revision",

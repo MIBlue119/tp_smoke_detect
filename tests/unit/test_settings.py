@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -87,3 +88,20 @@ def test_mounted_policy_and_camera_yaml_merge_before_environment(
     assert settings.policy.mode is RunMode.SHADOW
     assert settings.policy.audio_muted is True
     assert [camera.camera_id for camera in settings.cameras] == ["cam-mounted"]
+
+
+def test_top_level_json_environment_overrides_match_basesettings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SMOKE_DETECT_CAMERAS", json.dumps([valid_camera()]))
+    monkeypatch.setenv(
+        "SMOKE_DETECT_POLICY",
+        '{"mode":"shadow","audio_muted":false,"hourly_audio_cap":2}',
+    )
+
+    settings = load_settings()
+
+    assert settings.policy.mode is RunMode.SHADOW
+    assert settings.policy.audio_muted is False
+    assert settings.policy.hourly_audio_cap == 2
+    assert [camera.camera_id for camera in settings.cameras] == ["cam-01"]

@@ -58,6 +58,16 @@ class AudioRequestService:
         result = self.policy.evaluate(decision, context)
         receipt: AudioPlaybackReceipt | None = None
         if result.command is not None:
+            if getattr(self.repository, "reserve_audio_receipt", None) is not None:
+                self._record(
+                    decision,
+                    camera_id,
+                    zone_id,
+                    result,
+                    None,
+                    now,
+                    playback_override={"status": "pending"},
+                )
             receipt = self.controller.send(result.command)
             if receipt.status in {PlaybackStatus.REJECTED, PlaybackStatus.EXPIRED}:
                 result = AudioPolicyResult(
@@ -79,6 +89,8 @@ class AudioRequestService:
         result: AudioPolicyResult,
         receipt: AudioPlaybackReceipt | None,
         now: datetime,
+        *,
+        playback_override: dict[str, object] | None = None,
     ) -> None:
         if self.repository is None:
             return
@@ -95,10 +107,13 @@ class AudioRequestService:
             "outcome": result.outcome,
             "reason_code": result.reason_code.value,
             "command_id": str(result.command.command_id) if result.command else None,
-            "playback": receipt.model_dump(mode="json") if receipt else None,
+            "playback": (receipt.model_dump(mode="json") if receipt else playback_override),
             "created_at": now.astimezone(UTC).isoformat(),
         }
-        put_receipt = getattr(self.repository, "put_audio_receipt", None)
+        method_name = (
+            "reserve_audio_receipt" if playback_override is not None else "put_audio_receipt"
+        )
+        put_receipt = getattr(self.repository, method_name, None)
         if put_receipt is not None:
             put_receipt(payload)
 
