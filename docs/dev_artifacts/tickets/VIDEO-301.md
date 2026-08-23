@@ -1,6 +1,6 @@
 # VIDEO-301 — Replay media worker
 
-Status: implemented on `feature/video-301-replay-worker`.
+Status: implemented; release hardening follow-up applied on `release/0.1.0`.
 
 ## Scope delivered
 
@@ -22,7 +22,8 @@ Status: implemented on `feature/video-301-replay-worker`.
 ## Verification
 
 - `uv run pytest tests/unit tests/contract tests/integration` — **39 passed**.
-- Focused replay tests — **4 passed**.
+- Focused replay tests — **5 passed**, including direct-manifest recording ID
+  separation.
 - `uv run smoke-detect demo --fixture synthetic` — `candidates=2 errors=0`.
 - Changed-file Ruff and `uv run mypy src tests` — **pass**.
 - Full `ruff format --check .` — **pass**.
@@ -36,4 +37,8 @@ Video-container decoding and GPU/RTSP ingestion remain VIDEO-302 scope.  The
 replay worker deliberately reports those codecs as `unsupported_media` rather
 than adding OpenCV/FFmpeg or GPU dependencies to the CPU profile.
 
-Related commit: `1f8d036`.
+Release hardening: direct `ReplayManifest(recording_id=...)` construction now
+preserves and validates the supplied identity; omitted IDs retain the
+artifact-content-derived legacy behavior.
+
+Related commits: `1f8d036`, release hardening follow-up pending.

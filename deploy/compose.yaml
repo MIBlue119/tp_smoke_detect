@@ -2,9 +2,10 @@
 #
 # Before release, resolve every image digest in image-pins.yaml and replace
 # the build image argument / image references with those digests.  The default
-# profile starts the API, audit database, metadata broker, and local metrics;
-# media and audio are explicit profiles because they require site hardware or
-# an adapter decision.
+# CPU profile starts only services that are implemented and wired: the
+# SQLite-backed API and local metrics. PostgreSQL/MQTT are retained as an
+# explicit future-site profile until their adapters are released; media and
+# audio likewise require site hardware or an adapter decision.
 name: tp-smoke-detect
 
 services:
@@ -27,6 +28,8 @@ services:
       SMOKE_DETECT_ENVIRONMENT: production
       SMOKE_DETECT_DATABASE: /var/lib/smoke-detect/state/audit.sqlite3
       SMOKE_DETECT_ARTIFACT_ROOT: /var/lib/smoke-detect/artifacts
+      SMOKE_DETECT_POLICY_CONFIG: /etc/smoke-detect/policy.yaml
+      SMOKE_DETECT_CAMERAS_CONFIG: /etc/smoke-detect/cameras.yaml
     ports:
       - "127.0.0.1:${SMOKE_CORE_PORT:-8000}:8000"
     networks: [site_net]
@@ -35,11 +38,6 @@ services:
       - smoke_artifacts:/var/lib/smoke-detect/artifacts
       - ./../configs/policy.example.yaml:/etc/smoke-detect/policy.yaml:ro
       - ./../configs/camera.example.yaml:/etc/smoke-detect/cameras.yaml:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-      mqtt:
-        condition: service_healthy
     healthcheck:
       test: [CMD, python, /app/scripts/healthcheck.py, --url, http://127.0.0.1:8000/health/live]
       interval: 10s
@@ -48,6 +46,7 @@ services:
       start_period: 15s
 
   postgres:
+    profiles: [future-site]
     image: ${SMOKE_POSTGRES_IMAGE:-postgres:16.4-alpine}
     restart: unless-stopped
     read_only: true
@@ -74,6 +73,7 @@ services:
       retries: 6
 
   mqtt:
+    profiles: [future-site]
     image: ${SMOKE_MQTT_IMAGE:-eclipse-mosquitto:2.0.20}
     restart: unless-stopped
     read_only: true

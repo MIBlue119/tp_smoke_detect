@@ -15,4 +15,8 @@ message CompletedDecision {
   double latency_ms = 10;
   string mode = 11;
   bool audio_eligibility = 12;
+  string event_id = 13;
+  string correlation_id = 14;
+  string producer = 15;
+  string occurred_at = 16;
 }

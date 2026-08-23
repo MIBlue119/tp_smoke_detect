@@ -15,6 +15,8 @@ from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from ..domain.models.decisions import ReasonCode
+
 _FORBIDDEN_LABELS = {
     "track_id",
     "decision_id",
@@ -36,6 +38,10 @@ _ALLOWED_LABELS = {
     "operation",
     "state",
     "status",
+}
+_DECISION_REASONS = frozenset(item.value for item in ReasonCode) | {
+    "evaluation_pending_provider",
+    "other",
 }
 
 
@@ -241,7 +247,8 @@ class OperationalMetrics:
         self.registry.observe("smoke_stage_latency_seconds", seconds, stage=stage)
 
     def decision(self, outcome: str, reason: str) -> None:
-        self.registry.inc("smoke_decisions_total", outcome=outcome, reason=reason)
+        bounded_reason = reason if reason in _DECISION_REASONS else "other"
+        self.registry.inc("smoke_decisions_total", outcome=outcome, reason=bounded_reason)
 
     def model_request(self, model_role: str, status: str) -> None:
         self.registry.inc("smoke_model_requests_total", model_role=model_role, status=status)

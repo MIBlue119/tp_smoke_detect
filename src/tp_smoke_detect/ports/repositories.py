@@ -44,21 +44,60 @@ class AuditRepository(Protocol):
 
     def list_cameras(self) -> list[dict[str, Any]]: ...
 
+    def get_camera(self, camera_id: str) -> dict[str, Any] | None: ...
+
     def put_artifact(self, artifact: dict[str, Any]) -> dict[str, Any]: ...
 
     def get_artifact(self, artifact_id: str) -> dict[str, Any] | None: ...
 
     def put_evaluation(self, evaluation: dict[str, Any]) -> dict[str, Any]: ...
 
+    def put_decision_and_evaluation(
+        self, decision: dict[str, Any], evaluation: dict[str, Any]
+    ) -> dict[str, Any]: ...
+
     def get_evaluation(self, evaluation_id: str) -> dict[str, Any] | None: ...
 
     def get_evaluation_by_idempotency(self, key: str) -> dict[str, Any] | None: ...
+
+    def claim_evaluation(
+        self,
+        evaluation_id: str,
+        idempotency_key: str,
+        camera_id: str,
+        request_fingerprint: str | None = None,
+    ) -> dict[str, Any] | None: ...
+
+    def fail_evaluation(self, evaluation_id: str, *, error: str | None = None) -> None: ...
 
     def put_mute(self, mute: dict[str, Any]) -> dict[str, Any]: ...
 
     def list_mutes(self) -> list[dict[str, Any]]: ...
 
     def put_audio_receipt(self, receipt: dict[str, Any]) -> dict[str, Any]: ...
+
+    def reserve_audio_receipt(
+        self,
+        receipt: dict[str, Any],
+        *,
+        cooldown_seconds: int = 0,
+        hourly_audio_cap: int = 0,
+        daily_audio_cap: int = 0,
+        reservation_ttl_seconds: int = 30,
+    ) -> dict[str, Any]: ...
+
+    def finalize_audio_receipt(
+        self, receipt_id: str, reservation_token: str, receipt: dict[str, Any]
+    ) -> dict[str, Any]: ...
+
+    def reconcile_expired_audio_receipt(
+        self,
+        receipt_id: str,
+        *,
+        now: datetime | None = None,
+        actor: str | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]: ...
 
     def get_audio_receipt(self, receipt_id: str) -> dict[str, Any] | None: ...
 

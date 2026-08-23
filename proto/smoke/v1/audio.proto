@@ -11,4 +11,8 @@ message AudioCommand {
   string volume_profile = 6;
   string expires_at = 7;
   string policy_revision = 8;
+  string event_id = 9;
+  string correlation_id = 10;
+  string producer = 11;
+  string occurred_at = 12;
 }

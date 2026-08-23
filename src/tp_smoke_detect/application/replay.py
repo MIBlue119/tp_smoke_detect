@@ -11,10 +11,12 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
+from uuid import NAMESPACE_URL, uuid5
 
 from ..adapters.artifacts.local import (
     ArtifactError,
@@ -79,8 +81,13 @@ class ReplayManifest:
     camera_id: str
     camera_config_revision: str
     frames: tuple[ReplayFrame, ...]
+    # ``None`` is the legacy sentinel.  A concrete value is always an
+    # explicitly supplied recording identity, including for direct public
+    # dataclass construction (not only ``from_mapping``).
+    recording_id: str | None = None
     source_fps: float = 30.0
     capture_start_ts_ns: int = 0
+    recording_id_explicit: bool = field(default=False, repr=False, compare=False)
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> ReplayManifest:
@@ -88,6 +95,16 @@ class ReplayManifest:
         revision = str(value.get("camera_config_revision", f"{camera_id}-r1"))
         source_fps = _positive_number(value.get("source_fps", 30.0), "source_fps")
         start_ns = _non_negative_int(value.get("capture_start_ts_ns", 0), "capture_start_ts_ns")
+        explicit_recording_id = value.get("recording_id", value.get("manifest_id"))
+        if explicit_recording_id is None:
+            explicit_recording_id = value.get("source_id")
+        recording_id_explicit = explicit_recording_id is not None
+        if explicit_recording_id is None:
+            # Leave the legacy sentinel absent. ReplayWorker derives a
+            # content-scoped identity after reading the referenced artifacts.
+            recording_id: str | None = None
+        else:
+            recording_id = _required_text({"recording_id": explicit_recording_id}, "recording_id")
         raw_frames = value.get("frames")
         if not isinstance(raw_frames, Sequence) or isinstance(raw_frames, (str, bytes, bytearray)):
             raise ValueError("manifest frames must be a list")
@@ -133,7 +150,15 @@ class ReplayManifest:
                     observations=observations,
                 )
             )
-        return cls(camera_id, revision, tuple(frames), source_fps, start_ns)
+        return cls(
+            camera_id,
+            revision,
+            tuple(frames),
+            recording_id,
+            source_fps,
+            start_ns,
+            recording_id_explicit,
+        )
 
     @classmethod
     def from_json(cls, payload: bytes | str) -> ReplayManifest:
@@ -239,12 +264,68 @@ class ReplayWorker:
         self, source: ReplayManifest | Mapping[str, Any] | Path | str
     ) -> ReplayManifest:
         if isinstance(source, ReplayManifest):
-            return source
+            return self._ensure_recording_identity(source)
         if isinstance(source, Mapping):
-            return ReplayManifest.from_mapping(source)
+            return self._ensure_recording_identity(ReplayManifest.from_mapping(source))
         path = str(source)
         payload = self.artifacts.read_bytes(path)
-        return ReplayManifest.from_json(payload)
+        return self._ensure_recording_identity(ReplayManifest.from_json(payload))
+
+    def _ensure_recording_identity(self, manifest: ReplayManifest) -> ReplayManifest:
+        """Give legacy manifests a content-scoped identity before emitting IDs.
+
+        Older manifests had no durable recording/source ID.  Their frame paths
+        are only names inside an artifact store, so hashing the manifest alone
+        lets two recordings overwrite each other's event identity when they
+        reuse those names.  Hash each referenced artifact in bounded chunks and
+        bind the resulting digest to the normalized manifest metadata.
+        """
+
+        if manifest.recording_id is not None:
+            recording_id = _required_text({"recording_id": manifest.recording_id}, "recording_id")
+            return replace(manifest, recording_id=recording_id, recording_id_explicit=True)
+        artifact_digests: dict[str, str] = {}
+        for frame in manifest.frames:
+            if frame.artifact_id in artifact_digests:
+                continue
+            digest = sha256()
+            try:
+                with self.artifacts.open(frame.artifact_id) as stream:
+                    while chunk := stream.read(1024 * 1024):
+                        digest.update(chunk)
+            except ArtifactError:
+                artifact_digests[frame.artifact_id] = "unavailable"
+            else:
+                artifact_digests[frame.artifact_id] = digest.hexdigest()
+        identity = {
+            "camera_id": manifest.camera_id,
+            "camera_config_revision": manifest.camera_config_revision,
+            "source_fps": manifest.source_fps,
+            "capture_start_ts_ns": manifest.capture_start_ts_ns,
+            "frames": [
+                {
+                    "frame_id": frame.frame_id,
+                    "artifact_id": frame.artifact_id,
+                    "artifact_sha256": artifact_digests[frame.artifact_id],
+                    "pts_ns": frame.pts_ns,
+                    "track_id": frame.track_id,
+                    "person_box": dict(frame.person_box),
+                    "source_width": frame.source_width,
+                    "source_height": frame.source_height,
+                    "face_pixels": frame.face_pixels,
+                    "crop_pixels": frame.crop_pixels,
+                    "illumination_profile": frame.illumination_profile,
+                    "observations": dict(frame.observations),
+                }
+                for frame in manifest.frames
+            ],
+        }
+        encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"), default=str)
+        return replace(
+            manifest,
+            recording_id=f"manifest-{sha256(encoded.encode()).hexdigest()}",
+            recording_id_explicit=True,
+        )
 
     def _candidate(self, manifest: ReplayManifest, frame: ReplayFrame) -> CandidateEnvelope:
         # Accessing the bytes is an intentional corruption/codec check.  The
@@ -286,6 +367,18 @@ class ReplayWorker:
         capture_ts_ns = manifest.capture_start_ts_ns + frame.pts_ns
         occurred = datetime.fromtimestamp(capture_ts_ns / 1_000_000_000, tz=UTC)
         return CandidateEnvelope(
+            event_id=uuid5(
+                NAMESPACE_URL,
+                "tp-smoke-detect/replay/"
+                f"{manifest.camera_id}/{manifest.recording_id}/{frame.track_id}/"
+                f"{frame.frame_id}/{frame.artifact_id}/{capture_ts_ns}",
+            ),
+            correlation_id=uuid5(
+                NAMESPACE_URL,
+                f"tp-smoke-detect/replay/{manifest.camera_id}/{manifest.recording_id}/{frame.track_id}",
+            ),
+            producer="tp-smoke-detect.replay",
+            occurred_at=occurred,
             camera_id=manifest.camera_id,
             track_id=frame.track_id,
             camera_config_revision=manifest.camera_config_revision,

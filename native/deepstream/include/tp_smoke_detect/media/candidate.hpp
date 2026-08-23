@@ -39,6 +39,13 @@ struct CandidateObservations {
 };
 
 struct CandidateEnvelope {
+  // Delivery identity is mandatory for every newly emitted broker envelope.
+  // Values use UUID text so the native producer can be validated by the same
+  // versioned Python contract as replay and API producers.
+  std::string event_id;
+  std::string correlation_id;
+  std::string producer{"tp-smoke-detect.native-reference"};
+  std::string occurred_at;
   std::string camera_id;
   std::string track_id;
   std::string camera_config_revision;

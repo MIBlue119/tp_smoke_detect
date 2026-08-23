@@ -7,7 +7,9 @@ the same port and receive a structured unavailable receipt.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import inspect
+import time
+from collections.abc import Callable, Mapping
 
 from pydantic import ValidationError
 
@@ -29,7 +31,7 @@ class OnnxInferenceProvider:
         *,
         role: InferenceRole,
         revision: str,
-        runner: Callable[[InferenceRequest], object] | None = None,
+        runner: Callable[..., object] | None = None,
     ) -> None:
         self.role = role
         self.revision = revision
@@ -54,8 +56,41 @@ class OnnxInferenceProvider:
                 status=InferenceStatus.UNAVAILABLE,
                 reason="onnx_runtime_not_installed",
             )
+        started = time.monotonic()
         try:
-            raw = self._runner(request)
+            # A synchronous arbitrary callable cannot be cancelled safely in
+            # this process.  When a deadline is requested, require the ONNX
+            # runtime boundary to opt into the cooperative ``deadline`` (or
+            # legacy ``timeout_ms``) keyword rather than pretending that a
+            # local argument enforces a hard timeout.
+            if timeout_ms is not None:
+                parameters: Mapping[str, inspect.Parameter]
+                try:
+                    parameters = inspect.signature(self._runner).parameters
+                except (TypeError, ValueError):
+                    parameters = {}
+                accepts_kwargs = any(
+                    parameter.kind is inspect.Parameter.VAR_KEYWORD
+                    for parameter in parameters.values()
+                )
+                deadline = time.monotonic() + timeout_ms / 1000
+                if "deadline" in parameters or accepts_kwargs:
+                    raw = self._runner(request, deadline=deadline)
+                elif "timeout_ms" in parameters:
+                    raw = self._runner(request, timeout_ms=timeout_ms)
+                else:
+                    return failure_receipt(
+                        request,
+                        provider=self.provider_name,
+                        revision=self.revision,
+                        status=InferenceStatus.TIMEOUT,
+                        reason="onnx_runner_not_cooperative",
+                        latency_ms=0,
+                    )
+                if time.monotonic() > deadline:
+                    raise TimeoutError
+            else:
+                raw = self._runner(request)
             result = result_for_role(self.role, raw)
         except TimeoutError:
             return failure_receipt(
@@ -64,7 +99,7 @@ class OnnxInferenceProvider:
                 revision=self.revision,
                 status=InferenceStatus.TIMEOUT,
                 reason="onnx_inference_timeout",
-                latency_ms=float(timeout_ms or 0),
+                latency_ms=(time.monotonic() - started) * 1000,
             )
         except MemoryError:
             return failure_receipt(
@@ -98,7 +133,7 @@ class OnnxInferenceProvider:
             model_revision=self.revision,
             status=InferenceStatus.OK,
             result=result,
-            latency_ms=0,
+            latency_ms=(time.monotonic() - started) * 1000,
         )
 
 

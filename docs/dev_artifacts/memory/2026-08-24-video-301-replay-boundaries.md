@@ -50,4 +50,13 @@ raw bytes, arbitrary paths, wall-clock fields, or a decoder dependency to the
 CPU reference path.  Add a new versioned contract before changing candidate
 fields.
 
-Related commit: `1f8d036`.
+## Follow-up: public manifest identity
+
+Directly constructing `ReplayManifest` is a supported API path.  A hidden
+provenance flag cannot safely distinguish a caller's explicit ID from a
+legacy default.  Use `recording_id=None` as the legacy sentinel, preserve and
+validate concrete IDs, and derive the artifact-content identity only when the
+sentinel is present.  Regression coverage must compare two direct manifests
+with otherwise identical frames.
+
+Related commit: `1f8d036`; release hardening follow-up pending.

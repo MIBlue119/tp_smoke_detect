@@ -28,3 +28,5 @@ def test_artifact_schema_rejects_unknown_media_and_oversized_input() -> None:
 def test_mute_requires_scope_id_for_scoped_mutes() -> None:
     request = AudioMuteCreate(scope="camera", scope_id="cam-1", actor="operator", reason="test")
     assert request.scope_id == "cam-1"
+    with pytest.raises(ValueError, match="scope_id"):
+        AudioMuteCreate(scope="zone", actor="operator", reason="test")

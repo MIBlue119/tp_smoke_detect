@@ -63,10 +63,36 @@
       "title": "Camera Id",
       "type": "string"
     },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
     "decision_id": {
       "format": "uuid",
       "title": "Decision Id",
       "type": "string"
+    },
+    "event_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Id"
     },
     "evidence_channels": {
       "items": {
@@ -90,6 +116,19 @@
       "title": "Model Revisions",
       "type": "object"
     },
+    "occurred_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Occurred At"
+    },
     "outcome": {
       "$ref": "#/$defs/DecisionOutcome"
     },
@@ -97,6 +136,13 @@
       "maxLength": 128,
       "minLength": 1,
       "title": "Policy Revision",
+      "type": "string"
+    },
+    "producer": {
+      "default": "unknown",
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Producer",
       "type": "string"
     },
     "reason_codes": {

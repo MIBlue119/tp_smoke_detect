@@ -7,13 +7,13 @@ versioned contracts in :mod:`tp_smoke_detect.contracts`.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ..contracts import DecisionCompleted, RunMode
+from ..contracts import RunMode
 from ..settings import CameraProfile
 
 
@@ -33,7 +33,6 @@ class EvaluationCreate(APIModel):
     artifact_id: str | None = Field(default=None, min_length=1, max_length=128)
     camera_id: str = Field(min_length=1, max_length=128)
     mode: RunMode = RunMode.REPLAY
-    decision: DecisionCompleted | None = None
 
 
 class ReviewCreate(APIModel):
@@ -55,11 +54,29 @@ class AudioMuteCreate(APIModel):
     reason: str = Field(min_length=1, max_length=1000)
     actor: str = Field(min_length=1, max_length=128)
 
+    @field_validator("expires_at")
+    @classmethod
+    def require_aware_expiry(cls, value: datetime | None) -> datetime | None:
+        if value is not None:
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError("expires_at must include a timezone")
+            return value.astimezone(UTC)
+        return value
+
+    @model_validator(mode="after")
+    def require_scope_id_for_scoped_mute(self) -> AudioMuteCreate:
+        if self.scope != "site" and not self.scope_id:
+            raise ValueError("scope_id is required for zone and camera mutes")
+        return self
+
 
 class AudioRequestCreate(APIModel):
     decision_id: UUID
-    zone_id: str = Field(min_length=1, max_length=128)
-    now: datetime | None = None
+
+
+class AudioReceiptReconcile(APIModel):
+    actor: str = Field(min_length=1, max_length=128)
+    reason: str = Field(min_length=1, max_length=1000)
 
 
 class CameraUpdate(APIModel):

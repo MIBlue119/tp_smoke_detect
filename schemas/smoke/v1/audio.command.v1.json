@@ -7,10 +7,36 @@
       "title": "Command Id",
       "type": "string"
     },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
     "decision_id": {
       "format": "uuid",
       "title": "Decision Id",
       "type": "string"
+    },
+    "event_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Id"
     },
     "expires_at": {
       "format": "date-time",
@@ -23,10 +49,30 @@
       "title": "Message Id",
       "type": "string"
     },
+    "occurred_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Occurred At"
+    },
     "policy_revision": {
       "maxLength": 128,
       "minLength": 1,
       "title": "Policy Revision",
+      "type": "string"
+    },
+    "producer": {
+      "default": "unknown",
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Producer",
       "type": "string"
     },
     "schema_version": {

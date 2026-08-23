@@ -10,6 +10,29 @@
 namespace tp_smoke_detect::media {
 namespace {
 
+std::uint64_t fnv1a(const std::string& value, std::uint64_t seed) {
+  std::uint64_t hash = seed;
+  for (const unsigned char character : value) {
+    hash ^= character;
+    hash *= 1099511628211ULL;
+  }
+  return hash;
+}
+
+std::string stable_uuid(const std::string& seed) {
+  auto most = fnv1a(seed, 1469598103934665603ULL);
+  auto least = fnv1a(seed + "\\0tp-smoke-detect", 1099511628211ULL);
+  most = (most & 0xffffffffffff0fffULL) | 0x0000000000005000ULL;
+  least = (least & 0x3fffffffffffffffULL) | 0x8000000000000000ULL;
+  std::ostringstream output;
+  output << std::hex << std::setfill('0') << std::setw(8) << (most >> 32) << '-'
+         << std::setw(4) << ((most >> 16) & 0xffffULL) << '-'
+         << std::setw(4) << (most & 0xffffULL) << '-'
+         << std::setw(4) << (least >> 48) << '-' << std::setw(12)
+         << (least & 0xffffffffffffULL);
+  return output.str();
+}
+
 std::string utc_timestamp(std::uint64_t timestamp_ns) {
   const auto seconds = static_cast<std::time_t>(timestamp_ns / 1'000'000'000ULL);
   std::tm utc{};
@@ -132,6 +155,13 @@ std::optional<CandidateEnvelope> MediaWorker::candidate(
   if (iterator == cameras_.end()) return std::nullopt;
   const auto& config = iterator->second.config();
   CandidateEnvelope result;
+  const auto identity = camera_id + "/" + sample.track_id + "/" +
+                        std::to_string(sample.capture_ts_ns) + "/" +
+                        std::to_string(sample.source_pts_ns);
+  result.event_id = stable_uuid("event/" + identity);
+  result.correlation_id = stable_uuid("correlation/" + camera_id + "/" + sample.track_id);
+  result.producer = "tp-smoke-detect.native-reference";
+  result.occurred_at = utc_timestamp(sample.capture_ts_ns);
   result.camera_id = camera_id;
   result.track_id = sample.track_id;
   result.camera_config_revision = config.revision;

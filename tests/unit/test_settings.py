@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -65,3 +66,68 @@ def test_example_yaml_files_load() -> None:
     for path in Path("configs").glob("*.example.yaml"):
         settings = load_settings(path)
         assert settings.service_name == "tp-smoke-detect"
+
+
+def test_mounted_policy_and_camera_yaml_merge_before_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    policy = tmp_path / "policy.yaml"
+    policy.write_text("policy:\n  mode: shadow\n  audio_muted: false\n", encoding="utf-8")
+    cameras = tmp_path / "cameras.yaml"
+    cameras.write_text(
+        "cameras:\n  - camera_id: cam-mounted\n    zone_id: lobby\n"
+        "    roi: [{x: 0, y: 0}, {x: 1, y: 0}, {x: 1, y: 1}]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SMOKE_DETECT_ENVIRONMENT", "production")
+    monkeypatch.setenv("SMOKE_DETECT_POLICY__AUDIO_MUTED", "true")
+
+    settings = load_settings(policy_path=policy, cameras_path=cameras)
+
+    assert settings.environment == "production"
+    assert settings.policy.mode is RunMode.SHADOW
+    assert settings.policy.audio_muted is True
+    assert [camera.camera_id for camera in settings.cameras] == ["cam-mounted"]
+
+
+def test_top_level_json_environment_overrides_match_basesettings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SMOKE_DETECT_CAMERAS", json.dumps([valid_camera()]))
+    monkeypatch.setenv(
+        "SMOKE_DETECT_POLICY",
+        '{"mode":"shadow","audio_muted":false,"hourly_audio_cap":2}',
+    )
+
+    settings = load_settings()
+
+    assert settings.policy.mode is RunMode.SHADOW
+    assert settings.policy.audio_muted is False
+    assert settings.policy.hourly_audio_cap == 2
+    assert [camera.camera_id for camera in settings.cameras] == ["cam-01"]
+
+
+@pytest.mark.parametrize("nested_first", [True, False])
+def test_nested_policy_environment_override_is_order_independent(
+    monkeypatch: pytest.MonkeyPatch, nested_first: bool
+) -> None:
+    for name in (
+        "SMOKE_DETECT_POLICY",
+        "SMOKE_DETECT_POLICY__AUDIO_MUTED",
+        "SMOKE_DETECT_POLICY__MODE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    values = [
+        ("SMOKE_DETECT_POLICY__AUDIO_MUTED", "true"),
+        ("SMOKE_DETECT_POLICY__MODE", "automatic"),
+        ("SMOKE_DETECT_POLICY", '{"mode":"shadow","audio_muted":false}'),
+    ]
+    if not nested_first:
+        values.reverse()
+    for name, value in values:
+        monkeypatch.setenv(name, value)
+
+    settings = load_settings()
+
+    assert settings.policy.mode is RunMode.AUTOMATIC
+    assert settings.policy.audio_muted is True

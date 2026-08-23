@@ -7,6 +7,7 @@ def test_openapi_exposes_stable_v1_surface() -> None:
     expected = {
         "/health/live",
         "/health/ready",
+        "/metrics",
         "/v1/capabilities",
         "/v1/cameras",
         "/v1/cameras/{camera_id}",
@@ -17,6 +18,13 @@ def test_openapi_exposes_stable_v1_surface() -> None:
         "/v1/events/{decision_id}/reviews",
         "/v1/site-mode",
         "/v1/audio/mute",
+        "/v1/audio/requests",
         "/v1/models",
     }
     assert expected <= set(paths)
+    assert "post" in paths["/v1/audio/requests"]
+    request_schema = paths["/v1/audio/requests"]["post"]["requestBody"]["content"][
+        "application/json"
+    ]["schema"]
+    assert request_schema["$ref"].endswith("/AudioRequestCreate")
+    assert "get" in paths["/metrics"]

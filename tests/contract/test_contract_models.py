@@ -22,6 +22,10 @@ from tp_smoke_detect.contracts import (
 def candidate() -> CandidateEnvelope:
     now = datetime.now(UTC)
     return CandidateEnvelope(
+        event_id=uuid4(),
+        correlation_id=uuid4(),
+        producer="test",
+        occurred_at=now,
         camera_id="cam-01",
         track_id="track-1",
         camera_config_revision="cam-01-r1",
@@ -56,6 +60,10 @@ def test_candidate_contains_no_raw_pixels() -> None:
 def test_v1_decision_and_audio_envelopes_are_typed() -> None:
     decision_id = uuid4()
     decision = DecisionCompleted(
+        event_id=uuid4(),
+        correlation_id=uuid4(),
+        producer="test",
+        occurred_at=datetime.now(UTC),
         decision_id=decision_id,
         camera_id="cam-01",
         track_id="track-1",
@@ -68,6 +76,10 @@ def test_v1_decision_and_audio_envelopes_are_typed() -> None:
         audio_eligibility=False,
     )
     audio = AudioCommand(
+        event_id=uuid4(),
+        correlation_id=decision_id,
+        producer="test",
+        occurred_at=datetime.now(UTC),
         decision_id=decision_id,
         command_id=uuid4(),
         zone_id="lobby",
@@ -83,3 +95,10 @@ def test_v1_decision_and_audio_envelopes_are_typed() -> None:
 def test_contract_rejects_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         CandidateEnvelope.model_validate({**candidate().model_dump(), "raw_pixels": "secret"})
+
+
+def test_v1_envelopes_accept_legacy_payload_without_delivery_metadata() -> None:
+    payload = candidate().model_dump(mode="json")
+    payload.pop("event_id")
+    parsed = CandidateEnvelope.model_validate(payload)
+    assert parsed.event_id is None

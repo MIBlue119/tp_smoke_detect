@@ -355,6 +355,32 @@
       "title": "Capture Ts Ns",
       "type": "integer"
     },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "event_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Id"
+    },
     "first_seen_at": {
       "format": "date-time",
       "title": "First Seen At",
@@ -370,6 +396,26 @@
     },
     "observations": {
       "$ref": "#/$defs/Observations"
+    },
+    "occurred_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Occurred At"
+    },
+    "producer": {
+      "default": "unknown",
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Producer",
+      "type": "string"
     },
     "quality": {
       "$ref": "#/$defs/Quality"

@@ -108,6 +108,10 @@ def test_replay_decision_audit_shadow_and_review(tmp_path: Path) -> None:
         if result.outcome is not DecisionOutcome.VERIFIED or decisions:
             return
         decision = DecisionCompleted(
+            event_id=uuid4(),
+            correlation_id=uuid4(),
+            producer="test.e2e",
+            occurred_at=datetime(2026, 8, 24, tzinfo=UTC),
             decision_id=uuid4(),
             camera_id="e2e-camera",
             track_id="track-e2e",
@@ -169,6 +173,10 @@ def test_automatic_profile_uses_fake_audio_only_after_policy(tmp_path: Path) -> 
         AudioPolicy(AudioPolicyConfig(mode=RunMode.AUTOMATIC, audio_muted=False)), audio, repository
     )
     decision = DecisionCompleted(
+        event_id=uuid4(),
+        correlation_id=uuid4(),
+        producer="test.e2e",
+        occurred_at=datetime(2026, 8, 24, tzinfo=UTC),
         decision_id=uuid4(),
         camera_id="e2e-camera",
         track_id="track-e2e",
