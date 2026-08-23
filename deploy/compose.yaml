@@ -1,0 +1,163 @@
+# INT-701 air-gap-ready reference deployment.
+#
+# Before release, resolve every image digest in image-pins.yaml and replace
+# the build image argument / image references with those digests.  The default
+# profile starts the API, audit database, metadata broker, and local metrics;
+# media and audio are explicit profiles because they require site hardware or
+# an adapter decision.
+name: tp-smoke-detect
+
+services:
+  smoke-detect:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.core
+      args:
+        PYTHON_IMAGE: ${SMOKE_CORE_BASE_IMAGE:-python:3.11.11-slim-bookworm@sha256:081075da77b2b55c23c088251026fb69a7b2bf92471e491ff5fd75c192fd38e5}
+    image: ${SMOKE_CORE_IMAGE:-tp-smoke-detect/core:0.1.0-cpu}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    environment:
+      SMOKE_DETECT_ENVIRONMENT: production
+      SMOKE_DETECT_DATABASE: /var/lib/smoke-detect/state/audit.sqlite3
+      SMOKE_DETECT_ARTIFACT_ROOT: /var/lib/smoke-detect/artifacts
+    ports:
+      - "127.0.0.1:${SMOKE_CORE_PORT:-8000}:8000"
+    networks: [site_net]
+    volumes:
+      - smoke_state:/var/lib/smoke-detect/state
+      - smoke_artifacts:/var/lib/smoke-detect/artifacts
+      - ./../configs/policy.example.yaml:/etc/smoke-detect/policy.yaml:ro
+      - ./../configs/camera.example.yaml:/etc/smoke-detect/cameras.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mqtt:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, /app/scripts/healthcheck.py, --url, http://127.0.0.1:8000/health/live]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+
+  postgres:
+    image: ${SMOKE_POSTGRES_IMAGE:-postgres:16.4-alpine}
+    restart: unless-stopped
+    read_only: true
+    user: "999:999"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /run/postgresql:rw,noexec,nosuid,size=16m
+    environment:
+      POSTGRES_DB: smoke_detect
+      POSTGRES_USER: smoke_detect
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./../src/tp_smoke_detect/adapters/persistence/migrations:/docker-entrypoint-initdb.d:ro
+    networks: [site_net]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U smoke_detect -d smoke_detect]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  mqtt:
+    image: ${SMOKE_MQTT_IMAGE:-eclipse-mosquitto:2.0.20}
+    restart: unless-stopped
+    read_only: true
+    user: "1883:1883"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mqtt_data:/mosquitto/data
+      - mqtt_log:/mosquitto/log
+    expose: [1883]
+    networks: [site_net]
+    healthcheck:
+      test: [CMD-SHELL, mosquitto_sub -h 127.0.0.1 -t '$$SYS/broker/uptime' -C 1 -W 2 >/dev/null]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  prometheus:
+    image: ${SMOKE_PROMETHEUS_IMAGE:-prom/prometheus:v2.54.1}
+    restart: unless-stopped
+    read_only: true
+    user: "65534:65534"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+      - ./prometheus/dashboard.json:/etc/prometheus/dashboard.json:ro
+      - prometheus_data:/prometheus
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--web.listen-address=0.0.0.0:9090"]
+    depends_on:
+      smoke-detect:
+        condition: service_healthy
+    networks: [site_net]
+    ports:
+      - "127.0.0.1:${SMOKE_PROMETHEUS_PORT:-9090}:9090"
+
+  media-reference:
+    profiles: [media]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.media
+      target: reference
+    image: ${SMOKE_MEDIA_REFERENCE_IMAGE:-tp-smoke-detect/media:0.1.0-reference}
+    read_only: true
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    volumes:
+      - smoke_artifacts:/var/lib/smoke-detect/artifacts:ro
+    networks: [site_net]
+
+  audio-fake:
+    profiles: [audio]
+    image: ${SMOKE_CORE_IMAGE:-tp-smoke-detect/core:0.1.0-cpu}
+    entrypoint: ["python", "-c"]
+    command: ["print('fake audio adapter: catalogued messages only; no device attached')"]
+    read_only: true
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    networks: [site_net]
+
+volumes:
+  postgres_data:
+  mqtt_data:
+  mqtt_log:
+  prometheus_data:
+  smoke_state:
+  smoke_artifacts:
+
+networks:
+  site_net:
+    internal: true
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt
