@@ -1,0 +1,12 @@
+service_name: tp-smoke-detect
+environment: production
+policy:
+  mode: shadow
+  audio_muted: true
+  reject_on_unclear: true
+  min_persistence_ms: 2500
+  min_independent_channels: 2
+  queue_max_per_camera: 32
+  cooldown_seconds: 120
+  hourly_audio_cap: 5
+  daily_audio_cap: 25

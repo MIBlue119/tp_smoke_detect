@@ -1,0 +1,12 @@
+service_name: tp-smoke-detect
+environment: development
+policy:
+  mode: simulation
+  audio_muted: true
+  reject_on_unclear: true
+  min_persistence_ms: 2000
+  min_independent_channels: 2
+  queue_max_per_camera: 32
+  cooldown_seconds: 60
+  hourly_audio_cap: 10
+  daily_audio_cap: 100

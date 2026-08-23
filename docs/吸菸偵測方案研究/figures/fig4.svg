@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 330" width="940" height="330" role="img" aria-label="S5 VLM 複核被設計成固定介面的插槽，主用模型 Cosmos-Reason2-8B 與備援模型 Gemma 4 12B 皆可插入；若主管機關認定為危害產品，契約要求 30 日內無償切換至備援模型。"><style>
+svg{
+  --surface:#FFFFFF; --surface-2:#F4F7F7; --surface-3:#E4EAEA;
+  --ink:#0F1719; --ink-2:#39484C; --muted:#6C7C80; --line-2:#BCC7C8;
+  --accent:#BC440E; --accent-ink:#943409; --accent-soft:#F9E8DF; --teal-soft:#DBE8E7;
+  color:var(--ink); background:#FFFFFF;
+  font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+}
+@media (prefers-color-scheme: dark){
+ svg{
+  --surface:#111A1C; --surface-2:#162124; --surface-3:#1D2A2D;
+  --ink:#E3EBEB; --ink-2:#AFC0C1; --muted:#7C9092; --line-2:#3A4B4E;
+  --accent:#EE7738; --accent-ink:#F08953; --accent-soft:#2A1609; --teal-soft:#102A2A;
+  background:#111A1C;
+ }
+}
+.bx{fill:var(--surface);stroke:currentColor;stroke-width:1.25}
+.bx2{fill:var(--surface-2);stroke:currentColor;stroke-width:1.25}
+.bx3{fill:var(--surface-3);stroke:var(--line-2);stroke-width:1.25}
+.bxh{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.6}
+.bxd{fill:none;stroke:var(--line-2);stroke-width:1.25;stroke-dasharray:6 5}
+text{fill:currentColor}
+.tt{font-size:13px;font-weight:700}
+.ts{font-size:11.5px;font-weight:700}
+.td{font-size:10.5px;fill:var(--ink-2)}
+.tl{font-size:10.5px;fill:var(--muted);font-family:"IBM Plex Mono",monospace;letter-spacing:.02em}
+.tg{font-size:10.5px;fill:var(--muted)}
+.tn{font-family:"IBM Plex Mono",monospace;font-size:16px;font-weight:600}
+.hot{fill:var(--accent-ink)}
+.ln{stroke:currentColor;stroke-width:1.25;fill:none}
+.lnh{stroke:var(--accent);stroke-width:1.6;fill:none}
+.lnm{stroke:var(--line-2);stroke-width:1.25;fill:none}
+.dash{stroke-dasharray:5 4}
+.ah{fill:currentColor}
+.ahh{fill:var(--accent)}
+.ahm{fill:var(--line-2)}
+.band1{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.4}
+.band2{fill:var(--teal-soft);stroke:var(--line-2);stroke-width:1.2}
+.band3{fill:var(--surface-2);stroke:var(--line-2);stroke-width:1.2}
+</style><rect x="0" y="0" width="940" height="330" fill="var(--surface)"/>
+    <defs>
+      <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker>
+      <marker id="a4h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ahh" d="M0,0 L10,5 L0,10 z"/></marker>
+      <marker id="a4m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ahm" d="M0,0 L10,5 L0,10 z"/></marker>
+    </defs>
+
+    <!-- in / socket / out -->
+    <rect class="bx2" x="20" y="52" width="150" height="66" rx="4"/>
+    <text class="ts" x="36" y="78">S4 候選事件</text>
+    <text class="td" x="36" y="97">完成抽吸週期的軌跡</text>
+
+    <rect class="bx" x="230" y="30" width="320" height="110" rx="4"/>
+    <text class="tt" x="250" y="56">S5 · VLM 複核介面（固定契約）</text>
+    <text class="td" x="250" y="79">輸入：448² 人形裁切 × 5 影格 + 固定提示詞</text>
+    <text class="td" x="250" y="98">輸出：{ smoking / not_smoking / unclear }</text>
+    <text class="td" x="250" y="117">禁止自由文字輸出 · 3 次取樣需 3/3 一致</text>
+
+    <rect class="bx2" x="610" y="52" width="160" height="66" rx="4"/>
+    <text class="ts" x="626" y="78">S6 告警政策</text>
+    <text class="td" x="626" y="97">再經雙通道與持續判定</text>
+
+    <line class="ln" x1="172" y1="85" x2="226" y2="85" marker-end="url(#a4)"/>
+    <line class="ln" x1="552" y1="85" x2="606" y2="85" marker-end="url(#a4)"/>
+
+    <!-- model cards -->
+    <rect class="bxh" x="190" y="212" width="200" height="86" rx="4"/>
+    <text class="ts hot" x="206" y="236">主用 A</text>
+    <text class="td" x="206" y="255">Cosmos-Reason2-8B @ FP8</text>
+    <text class="td" x="206" y="273">Qwen3-VL 底座 · NVOML</text>
+    <text class="td" x="206" y="291">整合最順，血統有爭議</text>
+
+    <rect class="bx" x="420" y="212" width="220" height="86" rx="4"/>
+    <text class="ts" x="436" y="236">備援 B（契約強制維持）</text>
+    <text class="td" x="436" y="255">Gemma 4 12B @ BF16（Apache 2.0）</text>
+    <text class="td" x="436" y="273">或 Nemotron Nano 12B v2 VL</text>
+    <text class="td" x="436" y="291">血統乾淨，初驗時須完成實測</text>
+
+    <path class="lnh" d="M290,208 L290,144" marker-end="url(#a4h)"/>
+    <path class="lnm dash" d="M500,208 L500,144" marker-end="url(#a4m)"/>
+    <text class="tl" x="300" y="180">插入中</text>
+    <text class="tl" x="510" y="180">待命</text>
+
+    <!-- trigger -->
+    <rect class="bx3" x="690" y="196" width="230" height="118" rx="4"/>
+    <text class="ts" x="706" y="220">觸發替換的三種情形</text>
+    <text class="td" x="706" y="240">① 數發部認定為危害產品</text>
+    <text class="td" x="706" y="258">② 法令、函釋或指引變更</text>
+    <text class="td" x="706" y="276">③ 審計、政風或上級機關指示</text>
+    <text class="ts hot" x="706" y="300">→ 30 日內無償切換</text>
+
+    <line class="ln" x1="686" y1="255" x2="646" y2="255" marker-end="url(#a4)"/>
+
+    <text class="tl" x="20" y="322">保留 10–15% 契約價金作為模型替換保留款，於履約期滿且無替換事由發生後始行支付。</text>
+  </svg>

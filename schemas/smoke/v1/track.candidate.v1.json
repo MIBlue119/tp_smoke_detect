@@ -1,0 +1,465 @@
+{
+  "$defs": {
+    "BoundingBox": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Height",
+          "type": "number"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Width",
+          "type": "number"
+        },
+        "x": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height",
+        "confidence"
+      ],
+      "title": "BoundingBox",
+      "type": "object"
+    },
+    "Geometry": {
+      "additionalProperties": false,
+      "properties": {
+        "coverage_score": {
+          "default": 1.0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Coverage Score",
+          "type": "number"
+        },
+        "person_box": {
+          "$ref": "#/$defs/BoundingBox"
+        },
+        "roi_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Roi Id"
+        }
+      },
+      "required": [
+        "person_box"
+      ],
+      "title": "Geometry",
+      "type": "object"
+    },
+    "ObjectObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "label": {
+          "enum": [
+            "cigarette",
+            "vape",
+            "phone",
+            "cup",
+            "food",
+            "pen_toothpick",
+            "betel_quid",
+            "background",
+            "unknown"
+          ],
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "confidence"
+      ],
+      "title": "ObjectObservation",
+      "type": "object"
+    },
+    "Observations": {
+      "additionalProperties": false,
+      "properties": {
+        "independent_channels": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Independent Channels",
+          "type": "array"
+        },
+        "objects": {
+          "items": {
+            "$ref": "#/$defs/ObjectObservation"
+          },
+          "title": "Objects",
+          "type": "array"
+        },
+        "pose": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PoseObservation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "smoke": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SmokeObservation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "temporal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TemporalObservation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "Observations",
+      "type": "object"
+    },
+    "PoseObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "hand_to_mouth_distance": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hand To Mouth Distance"
+        },
+        "mouth_dwell_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mouth Dwell Ms"
+        }
+      },
+      "required": [
+        "confidence"
+      ],
+      "title": "PoseObservation",
+      "type": "object"
+    },
+    "Quality": {
+      "additionalProperties": false,
+      "properties": {
+        "crop_pixels": {
+          "minimum": 0,
+          "title": "Crop Pixels",
+          "type": "number"
+        },
+        "eligibility_reason": {
+          "title": "Eligibility Reason",
+          "type": "string"
+        },
+        "eligible": {
+          "title": "Eligible",
+          "type": "boolean"
+        },
+        "face_pixels": {
+          "minimum": 0,
+          "title": "Face Pixels",
+          "type": "number"
+        },
+        "illumination_profile": {
+          "enum": [
+            "day",
+            "night",
+            "mixed",
+            "unknown"
+          ],
+          "title": "Illumination Profile",
+          "type": "string"
+        },
+        "source_height": {
+          "exclusiveMinimum": 0,
+          "title": "Source Height",
+          "type": "integer"
+        },
+        "source_width": {
+          "exclusiveMinimum": 0,
+          "title": "Source Width",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "source_width",
+        "source_height",
+        "face_pixels",
+        "crop_pixels",
+        "illumination_profile",
+        "eligible",
+        "eligibility_reason"
+      ],
+      "title": "Quality",
+      "type": "object"
+    },
+    "SmokeObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "ember_score": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Ember Score",
+          "type": "number"
+        },
+        "smoke_score": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Smoke Score",
+          "type": "number"
+        }
+      },
+      "required": [
+        "smoke_score",
+        "ember_score"
+      ],
+      "title": "SmokeObservation",
+      "type": "object"
+    },
+    "Stage": {
+      "enum": [
+        "detected",
+        "quality",
+        "pose",
+        "object",
+        "temporal",
+        "review",
+        "completed"
+      ],
+      "title": "Stage",
+      "type": "string"
+    },
+    "TemporalObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "cycle_interval_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cycle Interval Ms"
+        },
+        "hand_retreat": {
+          "title": "Hand Retreat",
+          "type": "boolean"
+        },
+        "persistence_ms": {
+          "minimum": 0,
+          "title": "Persistence Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "hand_retreat",
+        "persistence_ms"
+      ],
+      "title": "TemporalObservation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The ``track.candidate.v1`` message represented as JSON.",
+  "properties": {
+    "artifact_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Artifact Ids",
+      "type": "array"
+    },
+    "camera_config_revision": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Camera Config Revision",
+      "type": "string"
+    },
+    "camera_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Camera Id",
+      "type": "string"
+    },
+    "capture_ts_ns": {
+      "minimum": 0,
+      "title": "Capture Ts Ns",
+      "type": "integer"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "event_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Id"
+    },
+    "first_seen_at": {
+      "format": "date-time",
+      "title": "First Seen At",
+      "type": "string"
+    },
+    "geometry": {
+      "$ref": "#/$defs/Geometry"
+    },
+    "last_seen_at": {
+      "format": "date-time",
+      "title": "Last Seen At",
+      "type": "string"
+    },
+    "observations": {
+      "$ref": "#/$defs/Observations"
+    },
+    "occurred_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Occurred At"
+    },
+    "producer": {
+      "default": "unknown",
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Producer",
+      "type": "string"
+    },
+    "quality": {
+      "$ref": "#/$defs/Quality"
+    },
+    "received_ts_ns": {
+      "minimum": 0,
+      "title": "Received Ts Ns",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "track.candidate.v1",
+      "default": "track.candidate.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_pts_ns": {
+      "minimum": 0,
+      "title": "Source Pts Ns",
+      "type": "integer"
+    },
+    "stage": {
+      "$ref": "#/$defs/Stage"
+    },
+    "track_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Track Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "camera_id",
+    "track_id",
+    "camera_config_revision",
+    "source_pts_ns",
+    "capture_ts_ns",
+    "received_ts_ns",
+    "first_seen_at",
+    "last_seen_at",
+    "stage",
+    "geometry",
+    "quality",
+    "observations"
+  ],
+  "title": "CandidateEnvelope",
+  "type": "object"
+}

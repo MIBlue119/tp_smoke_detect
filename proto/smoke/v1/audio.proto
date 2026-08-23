@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package smoke.v1;
+
+message AudioCommand {
+  string schema_version = 1;
+  string command_id = 2;
+  string decision_id = 3;
+  string zone_id = 4;
+  string message_id = 5;
+  string volume_profile = 6;
+  string expires_at = 7;
+  string policy_revision = 8;
+  string event_id = 9;
+  string correlation_id = 10;
+  string producer = 11;
+  string occurred_at = 12;
+}

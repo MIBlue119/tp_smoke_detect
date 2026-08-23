@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package smoke.v1;
+
+// Raw pixels are intentionally excluded. JSON Schema is the canonical generated
+// validation surface for the Python service; this file documents the broker ABI.
+message TrackCandidate {
+  string schema_version = 1;
+  string camera_id = 2;
+  string track_id = 3;
+  string camera_config_revision = 4;
+  uint64 source_pts_ns = 5;
+  uint64 capture_ts_ns = 6;
+  uint64 received_ts_ns = 7;
+  string first_seen_at = 8;
+  string last_seen_at = 9;
+  string stage = 10;
+  repeated string artifact_ids = 11;
+  string geometry_json = 12;
+  string quality_json = 13;
+  string observations_json = 14;
+  string event_id = 15;
+  string correlation_id = 16;
+  string producer = 17;
+  string occurred_at = 18;
+}

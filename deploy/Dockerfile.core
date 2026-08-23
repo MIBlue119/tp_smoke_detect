@@ -1,0 +1,47 @@
+# INT-701 CPU/reference core image.
+#
+# The release bundle must replace PYTHON_IMAGE with the digest recorded in
+# deploy/image-pins.yaml before import into an air-gapped host.  No service
+# downloads code, model weights, or media at runtime.
+ARG PYTHON_IMAGE=python:3.11.11-slim-bookworm@sha256:081075da77b2b55c23c088251026fb69a7b2bf92471e491ff5fd75c192fd38e5
+
+FROM ${PYTHON_IMAGE} AS build
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    UV_NO_CACHE=1
+WORKDIR /build
+
+# uv is used only while building the image.  The lockfile is copied before
+# source files so an offline build can be performed from a preloaded wheel
+# cache (UV_FIND_LINKS) without changing the runtime container.
+ARG UV_VERSION=0.6.14
+RUN python -m pip install --no-cache-dir "uv==${UV_VERSION}"
+COPY pyproject.toml uv.lock README.md ./
+COPY src ./src
+RUN uv sync --frozen --no-dev --no-editable
+
+FROM ${PYTHON_IMAGE} AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH=/app/.venv/bin:${PATH} \
+    SMOKE_DETECT_ARTIFACT_ROOT=/tmp/smoke-detect-artifacts \
+    SMOKE_DETECT_DATABASE=:memory:
+
+RUN groupadd --system --gid 10001 smoke-detect \
+    && useradd --system --uid 10001 --gid 10001 --home-dir /nonexistent \
+       --shell /usr/sbin/nologin smoke-detect \
+    && mkdir -p /app /var/lib/smoke-detect/artifacts /var/lib/smoke-detect/state \
+    && chown -R 10001:10001 /var/lib/smoke-detect
+WORKDIR /app
+
+COPY --from=build --chown=10001:10001 /build/.venv /app/.venv
+COPY --chown=10001:10001 src /app/src
+COPY --chown=10001:10001 scripts /app/scripts
+
+USER 10001:10001
+EXPOSE 8000
+
+# Compose adds read_only, cap_drop, no-new-privileges, and a tmpfs for /tmp.
+ENTRYPOINT ["python", "-m", "uvicorn", "tp_smoke_detect.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

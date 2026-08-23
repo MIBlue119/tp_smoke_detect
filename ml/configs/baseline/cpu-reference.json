@@ -1,0 +1,38 @@
+{
+  "schema_version": "ml.baseline-config.v1",
+  "profile_id": "cpu-reference",
+  "model_id": "frozen-named-class-head",
+  "embedding_revision": "fixture-embedding-v1",
+  "crop_strategies": [
+    "full_frame",
+    "person_crop",
+    "head_shoulder_crop",
+    "hand_face_crop"
+  ],
+  "named_classes": [
+    "smoking",
+    "betel_quid",
+    "phone",
+    "drink",
+    "food",
+    "nose_touch",
+    "pen_toothpick",
+    "steam",
+    "vape",
+    "heated_tobacco",
+    "background",
+    "unknown"
+  ],
+  "vlm": {
+    "enabled": false,
+    "required_status": "ok",
+    "failure_policy": "reject_on_unclear"
+  },
+  "evidence_level": "fixture_only",
+  "lab_gates": [
+    "site-camera sealed event set",
+    "GPU runtime and target-hardware qualification",
+    "model provenance and license approval",
+    "silent-period acceptance before automatic audio"
+  ]
+}

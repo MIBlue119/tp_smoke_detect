@@ -1,0 +1,40 @@
+# Image provenance manifest for the air-gapped release bundle.
+#
+# Tags are intentionally human-readable build inputs.  A release is not
+# qualified until each digest is filled from `docker image inspect` after the
+# image has been scanned and exported.  `scripts/qualify_media_host.sh` records
+# the GPU image digests; this file records the CPU/service inputs as well.
+schema_version: image-pins.v1
+generated_by: INT-701
+images:
+  core:
+    reference: python:3.11.11-slim-bookworm
+    digest: sha256:081075da77b2b55c23c088251026fb69a7b2bf92471e491ff5fd75c192fd38e5
+    purpose: cpu-reference-and-api
+    runtime_network: disabled
+  postgres:
+    reference: postgres:16.4-alpine
+    digest: "REQUIRED-BEFORE-RELEASE"
+    purpose: future-site-audit-store (not in default CPU profile)
+    runtime_network: internal-only
+  mqtt:
+    reference: eclipse-mosquitto:2.0.20
+    digest: "REQUIRED-BEFORE-RELEASE"
+    purpose: future-site-metadata-only-candidate-bus (not in default CPU profile)
+    runtime_network: internal-only
+  prometheus:
+    reference: prom/prometheus:v2.54.1
+    digest: "REQUIRED-BEFORE-RELEASE"
+    purpose: local-metrics
+    runtime_network: internal-only
+  media_reference:
+    reference: ubuntu:24.04
+    digest: "REQUIRED-BEFORE-RELEASE"
+    purpose: cpu-media-boundary-reference
+    runtime_network: disabled
+
+release_gate:
+  - resolve every REQUIRED-BEFORE-RELEASE digest before deployment
+  - attach SBOM and vulnerability disposition for every resolved image
+  - import images into the site registry before starting compose
+  - keep runtime egress disabled; model/media files are mounted local artifacts

@@ -1,0 +1,182 @@
+{
+  "$defs": {
+    "DecisionOutcome": {
+      "enum": [
+        "verified",
+        "rejected",
+        "unclear",
+        "error"
+      ],
+      "title": "DecisionOutcome",
+      "type": "string"
+    },
+    "EvidenceChannel": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "positive": {
+          "title": "Positive",
+          "type": "boolean"
+        },
+        "score": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Score",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "score",
+        "positive"
+      ],
+      "title": "EvidenceChannel",
+      "type": "object"
+    },
+    "RunMode": {
+      "enum": [
+        "simulation",
+        "replay",
+        "shadow",
+        "human_confirmed",
+        "automatic"
+      ],
+      "title": "RunMode",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The ``decision.completed.v1`` message represented as JSON.",
+  "properties": {
+    "audio_eligibility": {
+      "title": "Audio Eligibility",
+      "type": "boolean"
+    },
+    "camera_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Camera Id",
+      "type": "string"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "decision_id": {
+      "format": "uuid",
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "event_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Id"
+    },
+    "evidence_channels": {
+      "items": {
+        "$ref": "#/$defs/EvidenceChannel"
+      },
+      "title": "Evidence Channels",
+      "type": "array"
+    },
+    "latency_ms": {
+      "minimum": 0,
+      "title": "Latency Ms",
+      "type": "number"
+    },
+    "mode": {
+      "$ref": "#/$defs/RunMode"
+    },
+    "model_revisions": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Model Revisions",
+      "type": "object"
+    },
+    "occurred_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Occurred At"
+    },
+    "outcome": {
+      "$ref": "#/$defs/DecisionOutcome"
+    },
+    "policy_revision": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Policy Revision",
+      "type": "string"
+    },
+    "producer": {
+      "default": "unknown",
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Producer",
+      "type": "string"
+    },
+    "reason_codes": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Reason Codes",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "decision.completed.v1",
+      "default": "decision.completed.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "track_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Track Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "decision_id",
+    "camera_id",
+    "track_id",
+    "outcome",
+    "reason_codes",
+    "policy_revision",
+    "latency_ms",
+    "mode",
+    "audio_eligibility"
+  ],
+  "title": "DecisionCompleted",
+  "type": "object"
+}

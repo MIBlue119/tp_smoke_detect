@@ -1,0 +1,26 @@
+{
+  "title": "TP Smoke Detect Operations",
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Camera freshness",
+      "targets": [{"expr": "time() - smoke_camera_last_good_frame_timestamp_seconds", "legendFormat": "{{camera_id}}"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Queue depth",
+      "targets": [{"expr": "smoke_camera_queue_depth", "legendFormat": "{{camera_id}}"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Decision outcomes",
+      "targets": [{"expr": "rate(smoke_decisions_total[5m])", "legendFormat": "{{outcome}} / {{reason}}"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Stage latency",
+      "targets": [{"expr": "histogram_quantile(0.95, rate(smoke_stage_latency_seconds_bucket[5m]))", "legendFormat": "{{stage}}"}]
+    }
+  ]
+}
