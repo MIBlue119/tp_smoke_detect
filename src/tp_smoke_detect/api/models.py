@@ -55,6 +55,12 @@ class AudioMuteCreate(APIModel):
     actor: str = Field(min_length=1, max_length=128)
 
 
+class AudioRequestCreate(APIModel):
+    decision_id: UUID
+    zone_id: str = Field(min_length=1, max_length=128)
+    now: datetime | None = None
+
+
 class CameraUpdate(APIModel):
     profile: CameraProfile
     revision: str = Field(min_length=1, max_length=128)

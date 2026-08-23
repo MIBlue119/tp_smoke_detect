@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import time
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -53,6 +54,11 @@ class PolicySettings(BaseModel):
     cooldown_seconds: Annotated[int, Field(ge=0)] = 60
     hourly_audio_cap: Annotated[int, Field(ge=0)] = 10
     daily_audio_cap: Annotated[int, Field(ge=0)] = 100
+    quiet_hours_start: time | None = None
+    quiet_hours_end: time | None = None
+    policy_revision: str = Field(default="default", min_length=1, max_length=128)
+    audio_message_id: str = Field(default="smoke-reminder-neutral-01", min_length=1, max_length=128)
+    audio_command_ttl_seconds: Annotated[int, Field(gt=0)] = 30
 
 
 class AppSettings(BaseSettings):
