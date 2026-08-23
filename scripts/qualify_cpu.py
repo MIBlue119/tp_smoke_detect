@@ -32,6 +32,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="receipt path (default: docs/dev_artifacts/qualification/<date>-int-701-cpu.md)",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="run the CPU gate and print the receipt without writing a file",
+    )
     return parser
 
 
@@ -45,7 +50,6 @@ def main() -> int:
     # absolute .venv path into a durable artifact.
     command = ["uv", "run", "pytest", "tests/e2e", "-q"]
     completed = subprocess.run(command, check=False, capture_output=True, text=True)
-    output.parent.mkdir(parents=True, exist_ok=True)
     status = "PASS" if completed.returncode == 0 else "FAIL"
     lines = [
         "# INT-701 CPU qualification receipt",
@@ -81,7 +85,12 @@ def main() -> int:
             "",
         ]
     )
-    output.write_text("\n".join(lines), encoding="utf-8")
+    receipt = "\n".join(lines)
+    if args.check:
+        print(receipt)
+    else:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(receipt, encoding="utf-8")
     print(output)
     return completed.returncode
 

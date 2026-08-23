@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import subprocess
+import sys
 import tarfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -9,6 +11,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import cast
 from uuid import uuid4
+
+import pytest
 
 from tp_smoke_detect.adapters.persistence.sqlite import SQLiteAuditRepository
 
@@ -121,6 +125,15 @@ def _backup_module() -> ModuleType:
     return module
 
 
+def _qualification_module() -> ModuleType:
+    path = Path(__file__).parents[2] / "scripts" / "qualify_cpu.py"
+    spec = importlib.util.spec_from_file_location("qualify_cpu", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_restore_rejects_tampering_before_publishing_destination(tmp_path: Path) -> None:
     backup = _backup_module()
     source = tmp_path / "source"
@@ -169,3 +182,46 @@ def test_restore_cleans_staging_when_archive_is_missing(tmp_path: Path) -> None:
         raise AssertionError("missing backup was accepted")
 
     assert list(tmp_path.glob(".live.restore-*")) == []
+
+
+def test_restore_first_publish_rename_failure_preserves_live_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fault before the live rename must not make rollback delete live data."""
+
+    backup = _backup_module()
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "config.json").write_text('{"safe":true}', encoding="utf-8")
+    archive_path = tmp_path / "backup.tar.gz"
+    backup.create_backup(source, archive_path)
+    destination = tmp_path / "live"
+    destination.mkdir()
+    (destination / "keep.txt").write_text("untouched", encoding="utf-8")
+    original_replace = backup.os.replace
+
+    def fail_live_rename(old: str | Path, new: str | Path) -> None:
+        if Path(old) == destination:
+            raise OSError("injected first rename failure")
+        original_replace(old, new)
+
+    monkeypatch.setattr(backup.os, "replace", fail_live_rename)
+    with pytest.raises(OSError, match="first rename"):
+        backup.restore_backup(archive_path, destination)
+    assert (destination / "keep.txt").read_text(encoding="utf-8") == "untouched"
+    assert list(tmp_path.glob(".live.previous-*")) == []
+
+
+def test_cpu_qualification_check_is_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    qualification = _qualification_module()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        qualification.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "1 passed", ""),
+    )
+    monkeypatch.setattr(sys, "argv", ["qualify_cpu.py", "--check"])
+    assert qualification.main() == 0
+    assert not (tmp_path / "docs").exists()

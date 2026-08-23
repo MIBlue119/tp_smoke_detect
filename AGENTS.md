@@ -34,7 +34,7 @@ uv run pytest tests/e2e
 uv run smoke-detect schema --output schemas/smoke/v1
 uv run smoke-detect validate-config configs/camera.example.yaml
 uv run smoke-detect demo --fixture synthetic
-uv run python scripts/qualify_cpu.py
+uv run python scripts/qualify_cpu.py --check
 
 # Native CPU reference qualification (run both optimization profiles)
 cmake -S native/deepstream -B native/deepstream/build-debug \

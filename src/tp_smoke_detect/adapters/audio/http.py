@@ -137,7 +137,7 @@ class HttpAudioController:
                     detail_code="invalid_receipt_time",
                 )
             receipt_at = receipt.accepted_at.astimezone(UTC)
-            if receipt_at > command.expires_at.astimezone(UTC):
+            if receipt_at >= command.expires_at.astimezone(UTC):
                 return AudioPlaybackReceipt(
                     command_id=str(command.command_id),
                     decision_id=str(command.decision_id),

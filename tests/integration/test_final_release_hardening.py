@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from threading import Event
 from typing import Any
 from uuid import uuid4
 
@@ -13,11 +15,11 @@ from tp_smoke_detect.adapters.persistence.sqlite import (
 )
 from tp_smoke_detect.api.app import create_app
 from tp_smoke_detect.application.request_audio import AudioRequestService
-from tp_smoke_detect.contracts import AudioCommand, RunMode
+from tp_smoke_detect.contracts import AudioCommand, Point, RunMode
 from tp_smoke_detect.domain.policy.audio import AudioPolicy, AudioPolicyConfig
 from tp_smoke_detect.observability.metrics import OperationalMetrics
 from tp_smoke_detect.ports.audio import AudioPlaybackReceipt, PlaybackStatus
-from tp_smoke_detect.settings import AppSettings, PolicySettings
+from tp_smoke_detect.settings import AppSettings, CameraProfile, PolicySettings
 
 
 def _asgi_json(
@@ -212,7 +214,7 @@ def test_expired_audio_reservation_requires_explicit_reconciliation_and_never_re
     reconciled = repository.reconcile_expired_audio_receipt(
         "audio:expired", now=now, actor="operator-1", reason="worker host restarted"
     )
-    assert reconciled["playback"]["status"] == "expired"
+    assert reconciled["playback"]["status"] == "uncertain"
     assert reconciled["reconciled_by"] == "operator-1"
     assert reconciled["reconciliation_reason"] == "worker host restarted"
     retry = repository.reserve_audio_receipt(
@@ -229,6 +231,150 @@ def test_expired_audio_reservation_requires_explicit_reconciliation_and_never_re
         "reservation_status": "rejected",
         "reservation_reason": "reservation_expired",
     }
+
+
+def test_reconciliation_is_in_doubt_but_matching_owner_can_finalize() -> None:
+    repository = SQLiteAuditRepository()
+    now = datetime.now(UTC)
+    original_created = now - timedelta(seconds=10)
+    reserved = repository.reserve_audio_receipt(
+        {
+            "receipt_id": "audio:reconcile-owner",
+            "decision_id": "reconcile-owner",
+            "camera_id": "cam-1",
+            "zone_id": "zone-a",
+            "created_at": original_created.isoformat(),
+        },
+        reservation_ttl_seconds=1,
+    )
+    token = reserved["playback"]["reservation_token"]
+    reconciled = repository.reconcile_expired_audio_receipt(
+        "audio:reconcile-owner", now=now, actor="operator-1"
+    )
+    assert reconciled["playback"]["status"] == "uncertain"
+    assert reconciled["created_at"] == original_created.isoformat()
+    finalized = repository.finalize_audio_receipt(
+        "audio:reconcile-owner",
+        str(token),
+        {
+            "decision_id": "reconcile-owner",
+            "camera_id": "cam-1",
+            "zone_id": "zone-a",
+            "outcome": "announce_requested",
+            "reason_code": "announced",
+            "command_id": "command-1",
+            "playback": {"status": "accepted"},
+            "created_at": now.isoformat(),
+        },
+    )
+    assert finalized["playback"]["status"] == "accepted"
+    attempts = repository.connection.execute(
+        "SELECT outcome, playback FROM audio_receipt_attempts "
+        "WHERE receipt_id=? ORDER BY attempt_no",
+        ("audio:reconcile-owner",),
+    ).fetchall()
+    assert [row[0] for row in attempts] == ["reserved", "suppressed", "announce_requested"]
+    assert '"status":"uncertain"' in attempts[1][1]
+    assert '"status":"accepted"' in attempts[2][1]
+
+
+class _BlockingAcceptAudio:
+    def __init__(self) -> None:
+        self.started = Event()
+        self.release = Event()
+
+    def send(self, command: AudioCommand) -> AudioPlaybackReceipt:
+        self.started.set()
+        assert self.release.wait(timeout=5)
+        return AudioPlaybackReceipt(
+            command_id=str(command.command_id),
+            decision_id=str(command.decision_id),
+            status=PlaybackStatus.ACCEPTED,
+        )
+
+
+def test_reconciliation_during_owner_io_keeps_accepted_audit_fact() -> None:
+    repository = SQLiteAuditRepository()
+    controller = _BlockingAcceptAudio()
+    service = AudioRequestService(
+        AudioPolicy(
+            AudioPolicyConfig(mode=RunMode.AUTOMATIC, audio_muted=False, command_ttl_seconds=1)
+        ),
+        controller,
+        repository,
+    )
+    decision_id = str(uuid4())
+    decision = _eligible_decision_payload(decision_id)
+    started_at = datetime.now(UTC)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(
+            service.request,
+            decision,
+            camera_id="cam-1",
+            zone_id="zone-a",
+            now=started_at,
+        )
+        assert controller.started.wait(timeout=5)
+        receipt_id = f"audio:{decision_id}"
+        reconciled = repository.reconcile_expired_audio_receipt(
+            receipt_id, now=started_at + timedelta(seconds=2)
+        )
+        assert reconciled["playback"]["status"] == "uncertain"
+        controller.release.set()
+        result = future.result(timeout=5)
+    assert result.allowed is True
+    saved = repository.get_audio_receipt(f"audio:{decision_id}")
+    assert saved is not None
+    assert saved["playback"]["status"] == "accepted"
+    assert saved["created_at"] == started_at.isoformat()
+
+
+def test_mounted_camera_profiles_reconcile_updates_and_deactivates_removed_profiles() -> None:
+    repository = SQLiteAuditRepository()
+    camera = CameraProfile(
+        camera_id="cam-mounted",
+        zone_id="lobby",
+        roi=[Point(x=0, y=0), Point(x=1, y=0), Point(x=1, y=1)],
+    )
+    create_app(repository, settings=AppSettings(cameras=[camera]))
+    changed = camera.model_copy(update={"zone_id": "loading", "enabled": False})
+    create_app(repository, settings=AppSettings(cameras=[changed]))
+    saved = repository.get_camera("cam-mounted")
+    assert saved is not None
+    assert saved["zone_id"] == "loading"
+    assert saved["enabled"] is False
+    assert saved["active"] is False
+    create_app(repository, settings=AppSettings(cameras=[]))
+    removed = repository.get_camera("cam-mounted")
+    assert removed is not None
+    assert removed["enabled"] is False
+    assert removed["active"] is False
+    assert removed["deactivated_by_config"] is True
+
+
+def test_inactive_camera_cannot_trigger_audio() -> None:
+    repository = SQLiteAuditRepository()
+    controller = _AlwaysFailAudio()
+    repository.upsert_camera(
+        {
+            "camera_id": "cam-1",
+            "zone_id": "zone-a",
+            "enabled": False,
+            "active": False,
+            "revision": "r1",
+        }
+    )
+    decision_id = str(uuid4())
+    repository.put_decision(_eligible_decision_payload(decision_id))
+    app = create_app(
+        repository,
+        settings=AppSettings(policy=PolicySettings(mode=RunMode.AUTOMATIC, audio_muted=False)),
+        audio_controller=controller,
+    )
+    response_status, response = _asgi_json(app, "/v1/audio/requests", {"decision_id": decision_id})
+    assert response_status == 409
+    assert "inactive" in str(response).lower()
+    assert controller.calls == 0
 
 
 class _AlwaysFailAudio:
@@ -380,6 +526,35 @@ def test_http_audio_rejects_accepted_receipt_after_command_expiry(
     monkeypatch.setattr(
         "tp_smoke_detect.adapters.audio.http.urlopen",
         lambda *args, **kwargs: _Response(late_body),
+    )
+    receipt = HttpAudioController("http://127.0.0.1/audio").send(command)
+    assert receipt.status is PlaybackStatus.EXPIRED
+    assert receipt.detail_code == "late_receipt"
+
+
+def test_http_audio_rejects_receipt_exactly_at_command_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = AudioCommand(
+        event_id=uuid4(),
+        correlation_id=uuid4(),
+        producer="test",
+        occurred_at=datetime.now(UTC),
+        command_id=uuid4(),
+        decision_id=uuid4(),
+        zone_id="zone-a",
+        message_id="smoke-reminder-neutral-01",
+        volume_profile="default",
+        expires_at=datetime.now(UTC) + timedelta(seconds=30),
+        policy_revision="p1",
+    )
+    exact_body = (
+        f'{{"command_id":"{command.command_id}","decision_id":"{command.decision_id}",'
+        f'"status":"accepted","accepted_at":"{command.expires_at.isoformat()}"}}'
+    ).encode()
+    monkeypatch.setattr(
+        "tp_smoke_detect.adapters.audio.http.urlopen",
+        lambda *args, **kwargs: _Response(exact_body),
     )
     receipt = HttpAudioController("http://127.0.0.1/audio").send(command)
     assert receipt.status is PlaybackStatus.EXPIRED

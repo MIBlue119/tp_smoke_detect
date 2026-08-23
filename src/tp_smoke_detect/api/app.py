@@ -123,15 +123,34 @@ def create_app(
     app.state.health = HealthRegistry(app.state.metrics)
     app.state.health.set_component("database", HealthState.HEALTHY)
 
-    # YAML camera profiles are authoritative configuration, so make them
-    # available through the same persisted lookup used by audio policy.
+    # YAML camera profiles are authoritative configuration. Reconcile every
+    # mounted profile on every boot and deactivate config-managed profiles
+    # removed from the mounted document.
+    mounted_ids: set[str] = set()
     for profile in app_settings.cameras:
-        if getattr(repo, "get_camera", lambda _camera_id: None)(profile.camera_id) is None:
-            revision = hashlib.sha256(
-                json.dumps(profile.model_dump(mode="json"), sort_keys=True).encode()
-            ).hexdigest()[:16]
+        mounted_ids.add(profile.camera_id)
+        revision = hashlib.sha256(
+            json.dumps(profile.model_dump(mode="json"), sort_keys=True).encode()
+        ).hexdigest()[:16]
+        repo.upsert_camera(
+            {
+                **profile.model_dump(mode="json"),
+                "revision": revision,
+                "active": profile.enabled,
+                "managed_by_config": True,
+                "deactivated_by_config": False,
+            }
+        )
+    for persisted in repo.list_cameras():
+        camera_id = str(persisted.get("camera_id", ""))
+        if persisted.get("managed_by_config") is True and camera_id not in mounted_ids:
             repo.upsert_camera(
-                {**profile.model_dump(mode="json"), "revision": revision, "active": profile.enabled}
+                {
+                    **persisted,
+                    "active": False,
+                    "enabled": False,
+                    "deactivated_by_config": True,
+                }
             )
 
     def get_repository() -> AuditRepository:
@@ -212,7 +231,14 @@ def create_app(
         if profile.camera_id != camera_id:
             raise HTTPException(status_code=422, detail="camera_id must match path")
         payload = profile.model_dump(mode="json")
-        payload.update({"revision": revision, "active": active})
+        payload.update(
+            {
+                "revision": revision,
+                "active": active,
+                "managed_by_config": False,
+                "deactivated_by_config": False,
+            }
+        )
         return repository.upsert_camera(payload)
 
     @app.post("/v1/artifacts", status_code=status.HTTP_201_CREATED, tags=["artifacts"])
@@ -380,6 +406,8 @@ def create_app(
         camera = repository.get_camera(camera_id)
         if camera is None or not camera.get("zone_id"):
             raise HTTPException(status_code=409, detail="camera profile with zone_id is required")
+        if camera.get("active", True) is not True or camera.get("enabled", True) is not True:
+            raise HTTPException(status_code=409, detail="camera is inactive or disabled")
         zone_id = str(camera["zone_id"])
 
         def perform() -> dict[str, object]:

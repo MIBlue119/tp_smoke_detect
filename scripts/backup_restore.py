@@ -150,10 +150,15 @@ def restore_backup(archive_path: Path, destination: Path) -> dict[str, object]:
                 target.write_bytes(content)
                 os.chmod(target, member.mode & 0o777)
         if destination.exists():
-            old_destination = destination.parent / f".{destination.name}.previous-{os.getpid()}"
-            if old_destination.exists():
-                shutil.rmtree(old_destination)
-            os.replace(destination, old_destination)
+            previous_destination = (
+                destination.parent / f".{destination.name}.previous-{os.getpid()}"
+            )
+            if previous_destination.exists():
+                shutil.rmtree(previous_destination)
+            # Assign rollback ownership only after this rename succeeds.  If
+            # it faults, the live destination is still completely untouched.
+            os.replace(destination, previous_destination)
+            old_destination = previous_destination
         os.replace(staging, destination)
         staging = Path()
         if old_destination is not None:

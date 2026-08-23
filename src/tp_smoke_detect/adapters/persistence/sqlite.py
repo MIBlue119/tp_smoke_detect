@@ -942,7 +942,13 @@ class SQLiteAuditRepository:
             accepted: list[datetime] = []
             for row in rows:
                 playback = json.loads(row[1]) if row[1] is not None else {}
-                if playback.get("status") not in {"accepted", "pending", "failed", "expired"}:
+                if playback.get("status") not in {
+                    "accepted",
+                    "pending",
+                    "failed",
+                    "expired",
+                    "uncertain",
+                }:
                     continue
                 accepted.append(datetime.fromisoformat(str(row[0])).astimezone(UTC))
             if (
@@ -1024,8 +1030,9 @@ class SQLiteAuditRepository:
         Reconciliation is an explicit operator/worker action. It never sends
         audio and never releases a lease merely because it is old; the caller
         must invoke this method after the command lifetime has elapsed. The
-        terminal ``expired`` state remains a safety fence, preventing a retry
-        from blindly issuing the same command.
+        terminal ``uncertain`` state remains a safety fence, preventing a
+        retry from blindly issuing the same command. The original owner can
+        still finalize this in-doubt row with its reservation token.
         """
 
         observed_at = (now or datetime.now(UTC)).astimezone(UTC)
@@ -1061,7 +1068,7 @@ class SQLiteAuditRepository:
                 }
             terminal = {
                 **playback,
-                "status": "expired",
+                "status": "uncertain",
                 "detail_code": "reservation_expired",
                 "reconciled_at": observed_at.isoformat(),
             }
@@ -1070,7 +1077,6 @@ class SQLiteAuditRepository:
                     "outcome": "suppressed",
                     "reason_code": "reservation_expired",
                     "playback": terminal,
-                    "created_at": observed_at.isoformat(),
                 }
             )
             if actor is not None:
@@ -1079,12 +1085,11 @@ class SQLiteAuditRepository:
                 payload["reconciliation_reason"] = reason
             updated = self.connection.execute(
                 """UPDATE audio_receipts SET outcome=?, reason_code=?, playback=?,
-                created_at=?, payload=? WHERE receipt_id=? AND playback=?""",
+                payload=? WHERE receipt_id=? AND playback=?""",
                 (
                     "suppressed",
                     "reservation_expired",
                     _json(terminal),
-                    observed_at.isoformat(),
                     _json(payload),
                     receipt_id,
                     current[0],
@@ -1141,7 +1146,7 @@ class SQLiteAuditRepository:
                 self.connection.rollback()
                 return {"reservation_status": "rejected", "reservation_reason": "missing"}
             playback = json.loads(current[0]) if current[0] else {}
-            if playback.get("status") != "pending":
+            if playback.get("status") not in {"pending", "uncertain"}:
                 self.connection.commit()
                 existing = cast(dict[str, Any], _normalize_persisted(json.loads(current[1])))
                 existing["reservation_status"] = "already_finalized"
