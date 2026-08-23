@@ -5,7 +5,7 @@ import json
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated, Any, cast
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
@@ -247,19 +247,31 @@ def create_app(
                     if request.decision and request.decision.audio_eligibility
                     else None
                 )
-            saved_decision = repository.put_decision(decision)
+            evaluation = {
+                "evaluation_id": str(evaluation_id),
+                "status": "completed",
+                "result": {"decision": decision},
+                "idempotency_key": idempotency_key,
+                "camera_id": request.camera_id,
+            }
+            atomic_complete = getattr(repository, "put_decision_and_evaluation", None)
+            if atomic_complete is not None:
+                # The SQLite implementation commits both facts in one
+                # transaction.  A failure rolls back the decision before the
+                # claimed evaluation is made retryable below.
+                saved = atomic_complete(decision, evaluation)
+                saved_decision = decision
+            else:
+                # Compatibility for repository implementations that predate
+                # the atomic port.  The reference adapter always takes the
+                # transaction path.
+                saved_decision = repository.put_decision(decision)
+                evaluation["result"] = {"decision": saved_decision}
+                saved = repository.put_evaluation(evaluation)
+            saved_decision_any = cast(dict[str, Any], saved_decision)
             app.state.metrics.decision(
-                str(saved_decision["outcome"]), str(saved_decision["reason_codes"][0])
-            )
-            result = {"decision": saved_decision}
-            saved = repository.put_evaluation(
-                {
-                    "evaluation_id": str(evaluation_id),
-                    "status": "completed",
-                    "result": result,
-                    "idempotency_key": idempotency_key,
-                    "camera_id": request.camera_id,
-                }
+                str(saved_decision_any["outcome"]),
+                str(saved_decision_any["reason_codes"][0]),
             )
             return _evaluation_response(saved)
         except Exception as exc:

@@ -58,6 +58,7 @@ class AudioRequestService:
         )
         result = self.policy.evaluate(decision, context)
         receipt: AudioPlaybackReceipt | None = None
+        reservation_token: str | None = None
         command = result.command
         if command is not None:
             if getattr(self.repository, "reserve_audio_receipt", None) is not None:
@@ -78,7 +79,51 @@ class AudioRequestService:
                     )
                     self._record(decision, camera_id, zone_id, result, None, now)
                     return result
-            receipt = self.controller.send(command)
+                if reservation and reservation.get("reservation_status") == "existing":
+                    # The decision already has an accepted playback fact.
+                    # Retain this retry as an audit attempt without issuing a
+                    # second controller command.
+                    result = AudioPolicyResult(
+                        True, AudioReasonCode.ANNOUNCED, "announce_requested", command
+                    )
+                    self._record(
+                        decision,
+                        camera_id,
+                        zone_id,
+                        result,
+                        None,
+                        now,
+                        playback_override={"status": "duplicate"},
+                    )
+                    return result
+                pending_playback = reservation.get("playback") if reservation else None
+                if isinstance(pending_playback, Mapping):
+                    token = pending_playback.get("reservation_token")
+                    if token is not None:
+                        reservation_token = str(token)
+            try:
+                receipt = self.controller.send(command)
+            except Exception:
+                # Never strand a lease when an adapter raises before returning
+                # a typed receipt.  Persist the terminal failure before
+                # re-raising so the caller can retry after the bounded TTL.
+                if reservation_token is not None:
+                    self._record(
+                        decision,
+                        camera_id,
+                        zone_id,
+                        AudioPolicyResult(
+                            False, AudioReasonCode.ADAPTER_ERROR, "suppressed", result.command
+                        ),
+                        None,
+                        now,
+                        playback_override={
+                            "status": "failed",
+                            "detail_code": "adapter_error",
+                        },
+                        reservation_token=reservation_token,
+                    )
+                raise
             if receipt.status in {PlaybackStatus.REJECTED, PlaybackStatus.EXPIRED}:
                 result = AudioPolicyResult(
                     False,
@@ -88,7 +133,15 @@ class AudioRequestService:
                     "suppressed",
                     result.command,
                 )
-        self._record(decision, camera_id, zone_id, result, receipt, now)
+        self._record(
+            decision,
+            camera_id,
+            zone_id,
+            result,
+            receipt,
+            now,
+            reservation_token=reservation_token,
+        )
         return result
 
     def _record(
@@ -101,6 +154,7 @@ class AudioRequestService:
         now: datetime,
         *,
         playback_override: dict[str, object] | None = None,
+        reservation_token: str | None = None,
     ) -> dict[str, Any] | None:
         if self.repository is None:
             return None
@@ -123,9 +177,17 @@ class AudioRequestService:
         method_name = (
             "reserve_audio_receipt" if playback_override is not None else "put_audio_receipt"
         )
+        if playback_override is not None and playback_override.get("status") == "duplicate":
+            method_name = "put_audio_receipt"
+        if reservation_token is not None:
+            finalize = getattr(self.repository, "finalize_audio_receipt", None)
+            if finalize is not None:
+                return cast(
+                    dict[str, Any], finalize(payload["receipt_id"], reservation_token, payload)
+                )
         put_receipt = getattr(self.repository, method_name, None)
         if put_receipt is not None:
-            if playback_override is not None:
+            if playback_override is not None and method_name == "reserve_audio_receipt":
                 return cast(
                     dict[str, Any],
                     put_receipt(
@@ -133,6 +195,7 @@ class AudioRequestService:
                         cooldown_seconds=self.policy.config.cooldown_seconds,
                         hourly_audio_cap=self.policy.config.hourly_audio_cap,
                         daily_audio_cap=self.policy.config.daily_audio_cap,
+                        reservation_ttl_seconds=self.policy.config.command_ttl_seconds,
                     ),
                 )
             put_receipt(payload)

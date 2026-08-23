@@ -1,5 +1,6 @@
 import asyncio
 import json
+import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -81,6 +82,16 @@ def _decision(decision_id: str) -> dict[str, object]:
         "audio_eligibility": False,
         "audio_outcome": "would_announce",
     }
+
+
+def _claim_failed_evaluation_process(
+    database: str, barrier: Any, results: Any, evaluation_id: str
+) -> None:
+    repository = SQLiteAuditRepository(database)
+    barrier.wait()
+    claimed = repository.claim_evaluation(evaluation_id, "failed-cross-process", "cam-1")
+    results.put(claimed is None)
+    repository.close()
 
 
 def test_decisions_and_reviews_are_append_only_through_asgi() -> None:
@@ -216,6 +227,44 @@ def test_concurrent_evaluation_retries_claim_before_decision_side_effect() -> No
     assert repository.connection.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 1
 
 
+def test_failed_evaluation_reclaim_is_one_winner_across_process_connections(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "failed-reclaim.sqlite"
+    repository = SQLiteAuditRepository(database)
+    repository.put_evaluation(
+        {
+            "evaluation_id": "failed-original",
+            "status": "failed",
+            "idempotency_key": "failed-cross-process",
+            "result": {"error": "temporary"},
+        }
+    )
+    context = multiprocessing.get_context("fork")
+    barrier = context.Barrier(2)
+    results = context.Queue()
+    workers = [
+        context.Process(
+            target=_claim_failed_evaluation_process,
+            args=(str(database), barrier, results, f"replacement-{index}"),
+        )
+        for index in range(2)
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=10)
+        assert worker.exitcode == 0
+    assert sorted(results.get() for _ in workers) == [False, True]
+    assert (
+        repository.connection.execute(
+            "SELECT COUNT(*) FROM evaluations WHERE idempotency_key=?",
+            ("failed-cross-process",),
+        ).fetchone()[0]
+        == 1
+    )
+
+
 def test_audio_mute_rejects_naive_expiry_before_persisting() -> None:
     repository = SQLiteAuditRepository()
     app = create_app(repository, settings=AppSettings(cameras=[]))
@@ -344,3 +393,9 @@ def test_post_claim_failure_is_failed_then_retryable() -> None:
     )
     assert status == 202
     assert response["status"] == "completed"
+    assert repository.connection.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 1
+    metrics = app.state.metrics.render()
+    assert (
+        'smoke_decisions_total{outcome="rejected",reason="evaluation_pending_provider"} 1'
+        in metrics
+    )
