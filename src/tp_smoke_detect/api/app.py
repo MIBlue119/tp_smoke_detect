@@ -224,41 +224,50 @@ def create_app(
         if request.artifact_id and repository.get_artifact(request.artifact_id) is None:
             raise HTTPException(status_code=404, detail="artifact not found")
         evaluation_id = uuid4()
+        claimed = False
         if idempotency_key:
             claim = getattr(repository, "claim_evaluation", None)
             if claim is not None:
                 existing = claim(str(evaluation_id), idempotency_key, request.camera_id)
                 if existing is not None:
                     return _evaluation_response(existing)
+                claimed = True
             else:
                 existing = repository.get_evaluation_by_idempotency(idempotency_key)
                 if existing:
                     return _evaluation_response(existing)
-        decision = _decision_for_evaluation(request)
-        # Persisting a completed deterministic result makes the CPU replay path
-        # pollable while a future worker can replace this with running status.
-        if request.mode is RunMode.SHADOW:
-            decision["audio_eligibility"] = False
-            decision["audio_outcome"] = (
-                "would_announce"
-                if request.decision and request.decision.audio_eligibility
-                else None
+        try:
+            decision = _decision_for_evaluation(request)
+            # Persisting a completed deterministic result makes the CPU replay path
+            # pollable while a future worker can replace this with running status.
+            if request.mode is RunMode.SHADOW:
+                decision["audio_eligibility"] = False
+                decision["audio_outcome"] = (
+                    "would_announce"
+                    if request.decision and request.decision.audio_eligibility
+                    else None
+                )
+            saved_decision = repository.put_decision(decision)
+            app.state.metrics.decision(
+                str(saved_decision["outcome"]), str(saved_decision["reason_codes"][0])
             )
-        saved_decision = repository.put_decision(decision)
-        app.state.metrics.decision(
-            str(saved_decision["outcome"]), str(saved_decision["reason_codes"][0])
-        )
-        result = {"decision": saved_decision}
-        saved = repository.put_evaluation(
-            {
-                "evaluation_id": str(evaluation_id),
-                "status": "completed",
-                "result": result,
-                "idempotency_key": idempotency_key,
-                "camera_id": request.camera_id,
-            }
-        )
-        return _evaluation_response(saved)
+            result = {"decision": saved_decision}
+            saved = repository.put_evaluation(
+                {
+                    "evaluation_id": str(evaluation_id),
+                    "status": "completed",
+                    "result": result,
+                    "idempotency_key": idempotency_key,
+                    "camera_id": request.camera_id,
+                }
+            )
+            return _evaluation_response(saved)
+        except Exception as exc:
+            if claimed:
+                fail = getattr(repository, "fail_evaluation", None)
+                if fail is not None:
+                    fail(str(evaluation_id), error=type(exc).__name__)
+            raise
 
     @app.get(
         "/v1/evaluations/{evaluation_id}", response_model=EvaluationResponse, tags=["evaluations"]

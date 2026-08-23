@@ -6,9 +6,9 @@ Status: implementation complete; release verification recorded below
 
 - FINAL-001: SQLite row decoding now normalizes persisted booleans, and the
   ASGI test proves an eligible persisted decision can announce.
-- FINAL-002: automatic audio policy evaluation, durable pending reservation,
-  adapter send, and receipt write run under a per-zone lock in the CPU service;
-  concurrent requests cannot pass the cooldown/cap check together.
+- FINAL-002: automatic audio policy evaluation uses a database-level
+  `BEGIN IMMEDIATE` reservation with durable cooldown/hour/day checks before
+  adapter I/O; independent SQLite repositories/apps cannot reserve two slots.
 - FINAL-003: accepted playback is immutable in the safety summary row while
   every retry remains in `audio_receipt_attempts`.
 - FINAL-004: SQLite claims an idempotency key before decision creation and
@@ -22,12 +22,16 @@ Status: implementation complete; release verification recorded below
 - FINAL-007: restore archive validation and extraction are inside the staging
   cleanup transaction, including missing-archive and integrity failures.
 - FINAL-008: top-level complex environment variables use JSON decoding parity
-  with `BaseSettings` after YAML bootstrap.
+  with `BaseSettings` after YAML bootstrap, and nested overrides are applied
+  in a deterministic second pass regardless of environment insertion order.
+- RELEASE-003: post-claim evaluation failures now become terminal,
+  retryable `failed` rows; the next request atomically reclaims the key.
 
 ## Verification evidence
 
-Focused proof-first tests: `107 passed` across `tests/unit`, `tests/contract`,
-and `tests/integration`.
+Focused proof-first tests cover two independent SQLite apps, both mixed
+environment insertion orders, and a one-shot post-claim failure/retry. The
+full unit/contract/integration/e2e suite passes with `113 passed`.
 
 Full release commands and results are recorded in
 `docs/dev_artifacts/qualification/2026-08-24-rel-801-final-fix.md`.

@@ -105,3 +105,29 @@ def test_top_level_json_environment_overrides_match_basesettings(
     assert settings.policy.audio_muted is False
     assert settings.policy.hourly_audio_cap == 2
     assert [camera.camera_id for camera in settings.cameras] == ["cam-01"]
+
+
+@pytest.mark.parametrize("nested_first", [True, False])
+def test_nested_policy_environment_override_is_order_independent(
+    monkeypatch: pytest.MonkeyPatch, nested_first: bool
+) -> None:
+    for name in (
+        "SMOKE_DETECT_POLICY",
+        "SMOKE_DETECT_POLICY__AUDIO_MUTED",
+        "SMOKE_DETECT_POLICY__MODE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    values = [
+        ("SMOKE_DETECT_POLICY__AUDIO_MUTED", "true"),
+        ("SMOKE_DETECT_POLICY__MODE", "automatic"),
+        ("SMOKE_DETECT_POLICY", '{"mode":"shadow","audio_muted":false}'),
+    ]
+    if not nested_first:
+        values.reverse()
+    for name, value in values:
+        monkeypatch.setenv(name, value)
+
+    settings = load_settings()
+
+    assert settings.policy.mode is RunMode.AUTOMATIC
+    assert settings.policy.audio_muted is True

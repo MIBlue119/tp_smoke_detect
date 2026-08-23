@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from ..contracts import DecisionCompleted
 from ..domain.policy.audio import (
     AudioPolicy,
     AudioPolicyContext,
     AudioPolicyResult,
+    AudioReasonCode,
 )
 from ..ports.audio import AudioController, AudioPlaybackReceipt, PlaybackStatus
 
@@ -57,9 +58,10 @@ class AudioRequestService:
         )
         result = self.policy.evaluate(decision, context)
         receipt: AudioPlaybackReceipt | None = None
-        if result.command is not None:
+        command = result.command
+        if command is not None:
             if getattr(self.repository, "reserve_audio_receipt", None) is not None:
-                self._record(
+                reservation = self._record(
                     decision,
                     camera_id,
                     zone_id,
@@ -68,7 +70,15 @@ class AudioRequestService:
                     now,
                     playback_override={"status": "pending"},
                 )
-            receipt = self.controller.send(result.command)
+                if reservation and reservation.get("reservation_status") == "rejected":
+                    result = AudioPolicyResult(
+                        False,
+                        AudioReasonCode(str(reservation["reservation_reason"])),
+                        "suppressed",
+                    )
+                    self._record(decision, camera_id, zone_id, result, None, now)
+                    return result
+            receipt = self.controller.send(command)
             if receipt.status in {PlaybackStatus.REJECTED, PlaybackStatus.EXPIRED}:
                 result = AudioPolicyResult(
                     False,
@@ -91,9 +101,9 @@ class AudioRequestService:
         now: datetime,
         *,
         playback_override: dict[str, object] | None = None,
-    ) -> None:
+    ) -> dict[str, Any] | None:
         if self.repository is None:
-            return
+            return None
         decision_id = str(
             decision.decision_id
             if isinstance(decision, DecisionCompleted)
@@ -115,7 +125,18 @@ class AudioRequestService:
         )
         put_receipt = getattr(self.repository, method_name, None)
         if put_receipt is not None:
+            if playback_override is not None:
+                return cast(
+                    dict[str, Any],
+                    put_receipt(
+                        payload,
+                        cooldown_seconds=self.policy.config.cooldown_seconds,
+                        hourly_audio_cap=self.policy.config.hourly_audio_cap,
+                        daily_audio_cap=self.policy.config.daily_audio_cap,
+                    ),
+                )
             put_receipt(payload)
+        return None
 
 
 __all__ = ["AudioRequestService"]

@@ -115,6 +115,7 @@ def _environment_overrides(document: dict[str, Any]) -> dict[str, Any]:
     """
 
     known = {"service_name", "environment", "database", "artifact_root", "policy", "cameras"}
+    overrides: list[tuple[list[str], Any]] = []
     for name, raw_value in os.environ.items():
         if not name.startswith("SMOKE_DETECT_") or name in {
             "SMOKE_DETECT_CONFIG",
@@ -134,6 +135,13 @@ def _environment_overrides(document: dict[str, Any]) -> dict[str, Any]:
                 value = json.loads(raw_value)
             except json.JSONDecodeError:
                 value = raw_value
+        overrides.append((keys, value))
+
+    # BaseSettings applies nested variables after top-level JSON.  Keep those
+    # source classes separate so os.environ insertion order cannot change a
+    # safety setting such as audio_muted; sort the second pass for stable
+    # behavior when nested paths overlap.
+    for keys, value in sorted(overrides, key=lambda item: (len(item[0]), item[0])):
         _set_nested(document, keys, value)
     return document
 

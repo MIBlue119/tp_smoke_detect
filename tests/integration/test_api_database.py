@@ -1,8 +1,12 @@
 import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from pathlib import Path
+from threading import Barrier
+from typing import Any, cast
 from uuid import uuid4
+
+import pytest
 
 from tp_smoke_detect.adapters.persistence.sqlite import SQLiteAuditRepository
 from tp_smoke_detect.api.app import create_app
@@ -246,3 +250,97 @@ def test_idempotent_evaluation_lookup_returns_same_record() -> None:
     saved = repository.get_evaluation_by_idempotency("same-request")
     assert saved is not None
     assert saved["evaluation_id"] == evaluation_id
+
+
+def test_separate_apps_sharing_sqlite_reserve_audio_once(tmp_path: Path) -> None:
+    database = tmp_path / "shared.sqlite"
+    first = SQLiteAuditRepository(database)
+    second = SQLiteAuditRepository(database)
+    decisions = [str(uuid4()), str(uuid4())]
+    for decision_id in decisions:
+        decision = _decision(decision_id)
+        decision.update({"mode": "automatic", "audio_eligibility": True})
+        first.put_decision(decision)
+    first.upsert_camera(
+        {"camera_id": "cam-1", "zone_id": "shared-zone", "revision": "r1", "active": True}
+    )
+
+    class BarrierRepository(SQLiteAuditRepository):
+        def __init__(self, database: Path, barrier: Barrier) -> None:
+            super().__init__(database)
+            self.barrier = barrier
+
+        def list_audio_receipts(self, **kwargs: Any) -> list[dict[str, Any]]:
+            result = super().list_audio_receipts(**kwargs)
+            self.barrier.wait(timeout=5)
+            return cast(list[dict[str, Any]], result)
+
+    barrier = Barrier(2)
+    first.close()
+    second.close()
+    first = BarrierRepository(database, barrier)
+    second = BarrierRepository(database, barrier)
+    settings = AppSettings(
+        policy=PolicySettings(
+            mode=RunMode.AUTOMATIC,
+            audio_muted=False,
+            cooldown_seconds=600,
+            hourly_audio_cap=1,
+            daily_audio_cap=1,
+        ),
+        cameras=[],
+    )
+    apps = [create_app(first, settings=settings), create_app(second, settings=settings)]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(
+            pool.map(
+                lambda pair: _asgi_json(pair[0], "/v1/audio/requests", {"decision_id": pair[1]}),
+                zip(apps, decisions, strict=True),
+            )
+        )
+
+    assert sorted(response[1]["reason_code"] for response in responses) == [
+        "announced",
+        "hourly_cap",
+    ]
+    assert sum(len(app.state.audio_controller.commands) for app in apps) == 1
+    rows = first.connection.execute(
+        "SELECT playback FROM audio_receipts WHERE zone_id=?", ("shared-zone",)
+    ).fetchall()
+    assert sum(json.loads(row[0]).get("status") == "accepted" for row in rows if row[0]) == 1
+
+
+def test_post_claim_failure_is_failed_then_retryable() -> None:
+    class FailOnceRepository(SQLiteAuditRepository):
+        failed = False
+
+        def put_evaluation(self, evaluation: dict[str, object]) -> dict[str, object]:
+            if evaluation.get("status") == "completed" and not self.failed:
+                self.failed = True
+                raise RuntimeError("injected evaluation write failure")
+            return cast(dict[str, object], super().put_evaluation(evaluation))
+
+    repository = FailOnceRepository()
+    app = create_app(repository, settings=AppSettings(cameras=[]))
+    headers = [(b"idempotency-key", b"retryable-evaluation")]
+    with pytest.raises(RuntimeError, match="injected"):
+        _asgi_json(
+            app,
+            "/v1/evaluations",
+            {"camera_id": "cam-1", "mode": "replay"},
+            headers,
+        )
+    failed = repository.get_evaluation_by_idempotency("retryable-evaluation")
+    assert failed is not None
+    assert failed["status"] == "failed"
+    assert failed["result"] == {"error": "evaluation_failed", "retryable": True}
+
+    status, response = _asgi_json(
+        app,
+        "/v1/evaluations",
+        {"camera_id": "cam-1", "mode": "replay"},
+        headers,
+    )
+    assert status == 202
+    assert response["status"] == "completed"

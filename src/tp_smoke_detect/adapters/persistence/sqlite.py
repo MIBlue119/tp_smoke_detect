@@ -613,6 +613,32 @@ class SQLiteAuditRepository:
         return self.get_evaluation(str(item["evaluation_id"])) or item
 
     @_synchronized
+    def fail_evaluation(self, evaluation_id: str, *, error: str | None = None) -> None:
+        """Make a claimed evaluation terminal and retryable after a side effect fails."""
+
+        row = self.connection.execute(
+            "SELECT payload FROM evaluations WHERE evaluation_id=?", (evaluation_id,)
+        ).fetchone()
+        if row is None:
+            return
+        payload = cast(dict[str, Any], json.loads(row[0]))
+        payload["status"] = "failed"
+        payload["updated_at"] = _now()
+        payload["error"] = error or "evaluation persistence failed"
+        self.connection.execute(
+            "UPDATE evaluations SET status=?, result=?, payload=?, updated_at=? "
+            "WHERE evaluation_id=?",
+            (
+                "failed",
+                _json({"error": "evaluation_failed", "retryable": True}),
+                _json(payload),
+                payload["updated_at"],
+                evaluation_id,
+            ),
+        )
+        self.connection.commit()
+
+    @_synchronized
     def get_evaluation(self, evaluation_id: str) -> dict[str, Any] | None:
         row = self.connection.execute(
             "SELECT * FROM evaluations WHERE evaluation_id=?", (evaluation_id,)
@@ -658,6 +684,16 @@ class SQLiteAuditRepository:
             "updated_at": created_at,
         }
         with self.connection:
+            existing = self.connection.execute(
+                "SELECT evaluation_id, status FROM evaluations WHERE idempotency_key=?",
+                (idempotency_key,),
+            ).fetchone()
+            # Failed placeholders are terminal but retryable.  Reclaim the
+            # key atomically so a retry never inherits the old running row.
+            if existing is not None and existing[1] == "failed":
+                self.connection.execute(
+                    "DELETE FROM evaluations WHERE idempotency_key=?", (idempotency_key,)
+                )
             cursor = self.connection.execute(
                 """INSERT INTO evaluations
                 (evaluation_id,decision_id,status,idempotency_key,result,payload,created_at,updated_at)
@@ -723,17 +759,123 @@ class SQLiteAuditRepository:
         return result
 
     @_synchronized
-    def reserve_audio_receipt(self, receipt: dict[str, Any]) -> dict[str, Any]:
-        """Durably reserve a policy-approved playback before adapter I/O."""
+    def reserve_audio_receipt(
+        self,
+        receipt: dict[str, Any],
+        *,
+        cooldown_seconds: int = 0,
+        hourly_audio_cap: int = 0,
+        daily_audio_cap: int = 0,
+    ) -> dict[str, Any]:
+        """Atomically reserve policy-approved playback before adapter I/O.
+
+        ``BEGIN IMMEDIATE`` serializes this short reservation transaction
+        across independent SQLite connections/processes.  An app-local lock
+        remains only as an optimization.
+        """
 
         item = dict(receipt)
         item.setdefault("created_at", _now())
         item["outcome"] = "reserved"
         item["reason_code"] = "reserved"
         item["playback"] = {"status": "pending"}
-        if self.get_audio_receipt(str(item["receipt_id"])) is not None:
-            return cast(dict[str, Any], self.get_audio_receipt(str(item["receipt_id"])))
-        return cast(dict[str, Any], self.put_audio_receipt(item))
+        now = datetime.fromisoformat(str(item["created_at"])).astimezone(UTC)
+        cutoff = now.timestamp() - max(cooldown_seconds, 0)
+        hour_cutoff = now.timestamp() - 3600
+        day = now.date()
+        try:
+            self.connection.execute("BEGIN IMMEDIATE")
+            current = self.connection.execute(
+                "SELECT playback, payload FROM audio_receipts WHERE receipt_id=?",
+                (item["receipt_id"],),
+            ).fetchone()
+            if current is not None:
+                current_playback = json.loads(current[0]) if current[0] is not None else {}
+                if current_playback.get("status") == "accepted":
+                    self.connection.commit()
+                    existing = cast(dict[str, Any], _normalize_persisted(json.loads(current[1])))
+                    existing["reservation_status"] = "existing"
+                    return existing
+                if current_playback.get("status") == "pending":
+                    self.connection.rollback()
+                    return {
+                        "reservation_status": "rejected",
+                        "reservation_reason": "zone_cooldown",
+                    }
+            rows = self.connection.execute(
+                "SELECT created_at, playback FROM audio_receipts WHERE zone_id=?",
+                (item["zone_id"],),
+            ).fetchall()
+            accepted: list[datetime] = []
+            for row in rows:
+                playback = json.loads(row[1]) if row[1] is not None else {}
+                if playback.get("status") not in {"accepted", "pending"}:
+                    continue
+                accepted.append(datetime.fromisoformat(str(row[0])).astimezone(UTC))
+            if (
+                hourly_audio_cap
+                and sum(value.timestamp() >= hour_cutoff for value in accepted) >= hourly_audio_cap
+            ):
+                self.connection.rollback()
+                return {"reservation_status": "rejected", "reservation_reason": "hourly_cap"}
+            if (
+                daily_audio_cap
+                and sum(value.date() == day for value in accepted) >= daily_audio_cap
+            ):
+                self.connection.rollback()
+                return {"reservation_status": "rejected", "reservation_reason": "daily_cap"}
+            if cooldown_seconds and any(value.timestamp() >= cutoff for value in accepted):
+                self.connection.rollback()
+                return {"reservation_status": "rejected", "reservation_reason": "zone_cooldown"}
+            values = (
+                item["decision_id"],
+                item["camera_id"],
+                item["zone_id"],
+                item["outcome"],
+                item["reason_code"],
+                item.get("command_id"),
+                _json(item["playback"]),
+                item["created_at"],
+                _json(item),
+            )
+            if current is None:
+                self.connection.execute(
+                    """INSERT INTO audio_receipts
+                    (receipt_id,decision_id,camera_id,zone_id,outcome,reason_code,command_id,
+                     playback,created_at,payload) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (item["receipt_id"], *values),
+                )
+                attempt_no = 1
+            else:
+                self.connection.execute(
+                    """UPDATE audio_receipts SET decision_id=?,camera_id=?,zone_id=?,outcome=?,
+                    reason_code=?,command_id=?,playback=?,created_at=?,payload=?
+                    WHERE receipt_id=?""",
+                    (*values, item["receipt_id"]),
+                )
+                attempt_no = 0
+            if attempt_no:
+                self.connection.execute(
+                    """INSERT INTO audio_receipt_attempts
+                    (receipt_id,attempt_no,decision_id,outcome,reason_code,command_id,playback,
+                     created_at,payload) VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (
+                        item["receipt_id"],
+                        attempt_no,
+                        item["decision_id"],
+                        item["outcome"],
+                        item["reason_code"],
+                        item.get("command_id"),
+                        _json(item["playback"]),
+                        item["created_at"],
+                        _json(item),
+                    ),
+                )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return item
 
     @_synchronized
     def put_audio_receipt(self, receipt: dict[str, Any]) -> dict[str, Any]:
