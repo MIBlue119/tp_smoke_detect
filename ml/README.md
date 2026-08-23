@@ -17,3 +17,13 @@ and `not_applicable` for classes with no observations; these values must not be
 rendered as a measured zero. A release can be promoted only when all artifact
 hashes, approved provenance, a calibration report, SBOM, and rollback target
 are present.
+
+## U10 CPU proof path
+
+`ml.training` exports and loads a deterministic named-class head without model
+weights. `ml.evaluation.calibrate_threshold` must run on a calibration split;
+`run_ablation` then evaluates unchanged sealed event IDs with VLM disabled and
+enabled profiles. `compare_crop_strategies` emits one report per crop and all
+reports include Wilson confidence intervals. Generated model-card and
+provenance receipts mark evidence as `fixture_only` and qualification as
+`lab_required`; these artifacts do not claim site accuracy.
