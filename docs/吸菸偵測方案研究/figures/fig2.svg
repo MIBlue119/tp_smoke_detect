@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 600" width="940" height="600" role="img" aria-label="攝影機視野的平面扇形圖，分為三個同心區域：0 至 7 公尺可同時偵測香菸、動作與人員；7 至 15 公尺僅能偵測動作與人員；15 至 30 公尺僅能偵測人員存在。"><style>
+svg{
+  --surface:#FFFFFF; --surface-2:#F4F7F7; --surface-3:#E4EAEA;
+  --ink:#0F1719; --ink-2:#39484C; --muted:#6C7C80; --line-2:#BCC7C8;
+  --accent:#BC440E; --accent-ink:#943409; --accent-soft:#F9E8DF; --teal-soft:#DBE8E7;
+  color:var(--ink); background:#FFFFFF;
+  font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+}
+@media (prefers-color-scheme: dark){
+ svg{
+  --surface:#111A1C; --surface-2:#162124; --surface-3:#1D2A2D;
+  --ink:#E3EBEB; --ink-2:#AFC0C1; --muted:#7C9092; --line-2:#3A4B4E;
+  --accent:#EE7738; --accent-ink:#F08953; --accent-soft:#2A1609; --teal-soft:#102A2A;
+  background:#111A1C;
+ }
+}
+.bx{fill:var(--surface);stroke:currentColor;stroke-width:1.25}
+.bx2{fill:var(--surface-2);stroke:currentColor;stroke-width:1.25}
+.bx3{fill:var(--surface-3);stroke:var(--line-2);stroke-width:1.25}
+.bxh{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.6}
+.bxd{fill:none;stroke:var(--line-2);stroke-width:1.25;stroke-dasharray:6 5}
+text{fill:currentColor}
+.tt{font-size:13px;font-weight:700}
+.ts{font-size:11.5px;font-weight:700}
+.td{font-size:10.5px;fill:var(--ink-2)}
+.tl{font-size:10.5px;fill:var(--muted);font-family:"IBM Plex Mono",monospace;letter-spacing:.02em}
+.tg{font-size:10.5px;fill:var(--muted)}
+.tn{font-family:"IBM Plex Mono",monospace;font-size:16px;font-weight:600}
+.hot{fill:var(--accent-ink)}
+.ln{stroke:currentColor;stroke-width:1.25;fill:none}
+.lnh{stroke:var(--accent);stroke-width:1.6;fill:none}
+.lnm{stroke:var(--line-2);stroke-width:1.25;fill:none}
+.dash{stroke-dasharray:5 4}
+.ah{fill:currentColor}
+.ahh{fill:var(--accent)}
+.ahm{fill:var(--line-2)}
+.band1{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.4}
+.band2{fill:var(--teal-soft);stroke:var(--line-2);stroke-width:1.2}
+.band3{fill:var(--surface-2);stroke:var(--line-2);stroke-width:1.2}
+</style><rect x="0" y="0" width="940" height="600" fill="var(--surface)"/>
+    <defs>
+      <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker>
+    </defs>
+
+    <!-- band 3: 15-30 m -->
+    <path class="band3" d="M359.6,148.5 A300,300 0 0 1 359.6,411.5 L629.3,543 A600,600 0 0 0 629.3,17 Z"/>
+    <!-- band 2: 7-15 m -->
+    <path class="band2" d="M215.8,218.6 A140,140 0 0 1 215.8,341.4 L359.6,411.5 A300,300 0 0 0 359.6,148.5 Z"/>
+    <!-- band 1: 0-7 m -->
+    <path class="band1" d="M90,280 L215.8,218.6 A140,140 0 0 1 215.8,341.4 Z"/>
+
+    <!-- camera glyph -->
+    <rect class="bx" x="42" y="266" width="40" height="28" rx="3"/>
+    <path class="ln" d="M82,272 L96,264 L96,296 L82,288 Z"/>
+    <text class="tl" x="62" y="318" text-anchor="middle">攝影機</text>
+
+    <!-- band labels -->
+    <text class="ts" x="152" y="277" text-anchor="middle">0–7 m</text>
+    <text class="td" x="152" y="294" text-anchor="middle">香菸＋動作＋人員</text>
+
+    <text class="ts" x="288" y="277" text-anchor="middle">7–15 m</text>
+    <text class="td" x="288" y="294" text-anchor="middle">動作＋人員</text>
+
+    <text class="ts" x="500" y="277" text-anchor="middle">15–30 m</text>
+    <text class="td" x="500" y="294" text-anchor="middle">僅人員存在</text>
+
+    <!-- arc distance markers -->
+    <text class="tl" x="222" y="208" text-anchor="middle">7 m</text>
+    <text class="tl" x="366" y="138" text-anchor="middle">15 m</text>
+    <text class="tl" x="636" y="8" text-anchor="middle">30 m</text>
+
+    <!-- strategy callouts -->
+    <line class="ln" x1="152" y1="330" x2="152" y2="392" marker-end="url(#a2)"/>
+    <rect class="bxh" x="40" y="398" width="230" height="76" rx="4"/>
+    <text class="ts hot" x="56" y="422">直接香菸物件偵測</text>
+    <text class="td" x="56" y="440">精度最高，也是唯一能以外觀</text>
+    <text class="td" x="56" y="456">區分紙菸／電子煙／筆的一帶</text>
+
+    <line class="ln" x1="330" y1="330" x2="330" y2="392" marker-end="url(#a2)"/>
+    <rect class="bx" x="290" y="398" width="230" height="76" rx="4"/>
+    <text class="ts" x="306" y="422">姿態 + 行為推論為主</text>
+    <text class="td" x="306" y="440">香菸降為加分項；喝水、講電話</text>
+    <text class="td" x="306" y="456">進食的誤報在此帶顯著升高</text>
+
+    <line class="ln" x1="560" y1="330" x2="560" y2="392" marker-end="url(#a2)"/>
+    <rect class="bx" x="540" y="398" width="250" height="76" rx="4"/>
+    <text class="ts" x="556" y="422">不做吸菸判定</text>
+    <text class="td" x="556" y="440">固定鏡頭僅產生線索，交由 PTZ</text>
+    <text class="td" x="556" y="456">變焦複核，或改用空品感測器</text>
+
+    <!-- footnote inside canvas -->
+    <text class="tl" x="40" y="510">假設：4K 1/1.8" 感測器、f = 6 mm、日間。1080p 1/2.8" 感測器請將所有距離減半。</text>
+    <text class="tl" x="40" y="530">夜間紅外線環境下 0–7 m 帶亦失效——單色去掉色彩線索，1/30 秒快門把 3 px 寬的香菸抹成 6.7 px。</text>
+    <text class="tl" x="40" y="550">實務再乘 1.4–2.0 的折減（鏡頭 MTF／Nyquist × H.265 編碼損失）。</text>
+  </svg>

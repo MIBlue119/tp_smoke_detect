@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 530" width="940" height="530" role="img" aria-label="實體部署拓撲：現場攝影機與空品感測器經 PoE 交換器進入封閉網段的 GPU 伺服器，伺服器再以 HTTP 觸發現場 IP 喇叭播放預錄音檔；封閉網段對網際網路無任何連線。"><style>
+svg{
+  --surface:#FFFFFF; --surface-2:#F4F7F7; --surface-3:#E4EAEA;
+  --ink:#0F1719; --ink-2:#39484C; --muted:#6C7C80; --line-2:#BCC7C8;
+  --accent:#BC440E; --accent-ink:#943409; --accent-soft:#F9E8DF; --teal-soft:#DBE8E7;
+  color:var(--ink); background:#FFFFFF;
+  font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+}
+@media (prefers-color-scheme: dark){
+ svg{
+  --surface:#111A1C; --surface-2:#162124; --surface-3:#1D2A2D;
+  --ink:#E3EBEB; --ink-2:#AFC0C1; --muted:#7C9092; --line-2:#3A4B4E;
+  --accent:#EE7738; --accent-ink:#F08953; --accent-soft:#2A1609; --teal-soft:#102A2A;
+  background:#111A1C;
+ }
+}
+.bx{fill:var(--surface);stroke:currentColor;stroke-width:1.25}
+.bx2{fill:var(--surface-2);stroke:currentColor;stroke-width:1.25}
+.bx3{fill:var(--surface-3);stroke:var(--line-2);stroke-width:1.25}
+.bxh{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.6}
+.bxd{fill:none;stroke:var(--line-2);stroke-width:1.25;stroke-dasharray:6 5}
+text{fill:currentColor}
+.tt{font-size:13px;font-weight:700}
+.ts{font-size:11.5px;font-weight:700}
+.td{font-size:10.5px;fill:var(--ink-2)}
+.tl{font-size:10.5px;fill:var(--muted);font-family:"IBM Plex Mono",monospace;letter-spacing:.02em}
+.tg{font-size:10.5px;fill:var(--muted)}
+.tn{font-family:"IBM Plex Mono",monospace;font-size:16px;font-weight:600}
+.hot{fill:var(--accent-ink)}
+.ln{stroke:currentColor;stroke-width:1.25;fill:none}
+.lnh{stroke:var(--accent);stroke-width:1.6;fill:none}
+.lnm{stroke:var(--line-2);stroke-width:1.25;fill:none}
+.dash{stroke-dasharray:5 4}
+.ah{fill:currentColor}
+.ahh{fill:var(--accent)}
+.ahm{fill:var(--line-2)}
+.band1{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.4}
+.band2{fill:var(--teal-soft);stroke:var(--line-2);stroke-width:1.2}
+.band3{fill:var(--surface-2);stroke:var(--line-2);stroke-width:1.2}
+</style><rect x="0" y="0" width="940" height="530" fill="var(--surface)"/>
+    <defs>
+      <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker>
+      <marker id="a3h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ahh" d="M0,0 L10,5 L0,10 z"/></marker>
+    </defs>
+
+    <!-- closed segment -->
+    <rect class="bxd" x="440" y="40" width="470" height="390" rx="6"/>
+    <text class="tl" x="450" y="30">機關封閉網段 · 無對外連線 · 無遙測 · 無模型自動更新</text>
+
+    <!-- field devices -->
+    <rect class="bx" x="20" y="90" width="190" height="112" rx="4"/>
+    <text class="tt" x="36" y="116">攝影機群</text>
+    <text class="td" x="36" y="136">廣角情境 × 8–10（每區 1 支）</text>
+    <text class="td" x="36" y="154">望遠熱點 × 6–8（每熱點 1 支）</text>
+    <text class="td" x="36" y="172">PTZ × 1–3（複核用）</text>
+    <text class="td" x="36" y="190">Axis／Hanwha／i-PRO／Vivotek</text>
+
+    <rect class="bx" x="20" y="232" width="190" height="62" rx="4"/>
+    <text class="tt" x="36" y="258">空品感測器 × 4–8</text>
+    <text class="td" x="36" y="277">廁所／樓梯間——鏡頭去不了的地方</text>
+
+    <rect class="bxh" x="20" y="330" width="190" height="62" rx="4"/>
+    <text class="tt hot" x="36" y="356">IP 號角喇叭 × 3–5</text>
+    <text class="td" x="36" y="375">每區 1 支即足夠涵蓋</text>
+
+    <!-- switch -->
+    <rect class="bx2" x="280" y="150" width="110" height="90" rx="4"/>
+    <text class="ts" x="335" y="186" text-anchor="middle">PoE 交換器</text>
+    <text class="td" x="335" y="204" text-anchor="middle">× 2</text>
+    <text class="td" x="335" y="221" text-anchor="middle">24 埠</text>
+
+    <!-- server side -->
+    <rect class="bx" x="470" y="100" width="200" height="112" rx="4"/>
+    <text class="tt" x="486" y="126">GPU 伺服器</text>
+    <text class="td" x="486" y="145">2U 機架 · L40S 48GB × 1–2</text>
+    <text class="td" x="486" y="163">DeepStream 9.1（C/C++）</text>
+    <text class="td" x="486" y="181">RT-DETR + 追蹤 + 關卡</text>
+    <text class="td" x="486" y="199">VLM 複核（獨立容器）</text>
+
+    <rect class="bx" x="470" y="252" width="200" height="78" rx="4"/>
+    <text class="ts" x="486" y="276">影像與事件儲存</text>
+    <text class="td" x="486" y="294">原始影像 30 日</text>
+    <text class="td" x="486" y="312">事件片段 ≤90 日</text>
+
+    <rect class="bx" x="710" y="100" width="170" height="112" rx="4"/>
+    <text class="tt" x="726" y="126">操作員工作站</text>
+    <text class="td" x="726" y="145">審查佇列</text>
+    <text class="td" x="726" y="163">一鍵「誤判」回饋</text>
+    <text class="td" x="726" y="181">實體全域停播鍵</text>
+
+    <rect class="bx" x="710" y="252" width="170" height="78" rx="4"/>
+    <text class="ts" x="726" y="276">稽核日誌</text>
+    <text class="td" x="726" y="294">每次播放的時間／區域／</text>
+    <text class="td" x="726" y="312">信心值／觸發片段</text>
+
+    <!-- internet, crossed -->
+    <rect class="bx3" x="730" y="452" width="170" height="48" rx="4"/>
+    <text class="ts" x="815" y="482" text-anchor="middle">網際網路</text>
+    <line class="lnm dash" x1="815" y1="430" x2="815" y2="452"/>
+    <line class="ln" x1="806" y1="432" x2="824" y2="450" stroke-width="2"/>
+    <line class="ln" x1="824" y1="432" x2="806" y2="450" stroke-width="2"/>
+    <text class="tl" x="720" y="445" text-anchor="end">流量稽核，發現外連即重大違約</text>
+
+    <!-- arrows in -->
+    <line class="ln" x1="212" y1="140" x2="276" y2="176" marker-end="url(#a3)"/>
+    <text class="tl" x="244" y="140" text-anchor="middle">RTSP</text>
+
+    <line class="ln" x1="212" y1="262" x2="276" y2="220" marker-end="url(#a3)"/>
+    <text class="tl" x="244" y="268" text-anchor="middle">事件 API</text>
+
+    <line class="ln" x1="392" y1="188" x2="466" y2="158" marker-end="url(#a3)"/>
+    <text class="tl" x="429" y="150" text-anchor="middle">20 路</text>
+    <text class="tl" x="429" y="164" text-anchor="middle">+ 感測器事件</text>
+
+    <line class="ln" x1="672" y1="150" x2="706" y2="150" marker-end="url(#a3)"/>
+    <text class="tl" x="689" y="140" text-anchor="middle">佇列</text>
+
+    <line class="ln" x1="560" y1="214" x2="560" y2="248" marker-end="url(#a3)"/>
+    <text class="tl" x="570" y="236">Smart Record</text>
+
+    <line class="ln" x1="795" y1="214" x2="795" y2="248" marker-end="url(#a3)"/>
+    <text class="tl" x="805" y="236">判定回饋</text>
+
+    <!-- return audio path -->
+    <path class="lnh" d="M672,196 L690,196 L690,404 L115,404 L115,394" marker-end="url(#a3h)"/>
+    <text class="tl hot" x="400" y="396" text-anchor="middle">HTTP GET 觸發預錄音檔「本區域為禁菸場所，請勿吸菸」</text>
+  </svg>
