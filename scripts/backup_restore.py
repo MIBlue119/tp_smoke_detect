@@ -23,12 +23,14 @@ import tempfile
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
+from typing import BinaryIO
 
 MEDIA_NAMES = frozenset({"artifacts", "media", "clips", "raw_media", "event_clip"})
 MANIFEST_NAME = "backup-manifest.json"
 DEFAULT_DATABASE = "/var/lib/smoke-detect/state/audit.sqlite3"
 DEFAULT_POLICY_CONFIG = "/etc/smoke-detect/policy.yaml"
 DEFAULT_CAMERAS_CONFIG = "/etc/smoke-detect/cameras.yaml"
+_COPY_CHUNK_SIZE = 1024 * 1024
 
 
 def _excluded(relative: Path) -> bool:
@@ -43,6 +45,22 @@ def _iter_files(root: Path) -> Iterable[tuple[Path, Path]]:
         yield path, relative
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(_COPY_CHUNK_SIZE):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _copy_stream(source: BinaryIO, destination: BinaryIO) -> int:
+    total = 0
+    while chunk := source.read(_COPY_CHUNK_SIZE):
+        destination.write(chunk)
+        total += len(chunk)
+    return total
+
+
 def create_backup(source: Path, output: Path) -> dict[str, object]:
     source = source.expanduser().resolve(strict=True)
     if not source.is_dir():
@@ -52,7 +70,7 @@ def create_backup(source: Path, output: Path) -> dict[str, object]:
     files: list[dict[str, object]] = []
     with tarfile.open(output, "w:gz") as archive:
         for path, relative in _iter_files(source):
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            digest = _sha256_file(path)
             archive.add(path, arcname=relative.as_posix(), recursive=False)
             files.append(
                 {"path": relative.as_posix(), "sha256": digest, "size": path.stat().st_size}
@@ -115,20 +133,12 @@ def create_runtime_backup(
         return create_backup(root, output)
 
 
-def _atomic_write(path: Path, content: bytes) -> None:
-    path = path.expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    os.close(descriptor)
-    temporary = Path(temporary_name)
-    try:
-        temporary.write_bytes(content)
-        with temporary.open("rb") as stream:
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    finally:
-        if temporary.exists():
-            temporary.unlink()
+def _publish_temp_file(temporary: Path, destination: Path) -> None:
+    destination = destination.expanduser().resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with temporary.open("rb") as stream:
+        os.fsync(stream.fileno())
+    os.replace(temporary, destination)
 
 
 def backup_deployment(
@@ -162,13 +172,31 @@ def backup_deployment(
         "--output",
         "-",
     ]
-    completed = subprocess.run(command, check=False, capture_output=True)
-    if completed.returncode != 0:
-        detail = completed.stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"runtime backup failed: {detail or completed.returncode}")
-    if not completed.stdout.startswith(b"\x1f\x8b"):
-        raise RuntimeError("runtime backup did not return a gzip archive")
-    _atomic_write(output, completed.stdout)
+    output = output.expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{output.name}.", dir=output.parent)
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        with temporary.open("wb") as stream:
+            completed = subprocess.run(
+                command,
+                check=False,
+                stdout=stream,
+                stderr=subprocess.PIPE,
+            )
+            stream.flush()
+            os.fsync(stream.fileno())
+        if completed.returncode != 0:
+            detail = completed.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"runtime backup failed: {detail or completed.returncode}")
+        with temporary.open("rb") as stream:
+            if stream.read(2) != b"\x1f\x8b":
+                raise RuntimeError("runtime backup did not return a gzip archive")
+        _publish_temp_file(temporary, output)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
     return {"archive": str(output), "size": output.stat().st_size, "service": service}
 
 
@@ -227,10 +255,11 @@ def restore_backup(archive_path: Path, destination: Path) -> dict[str, object]:
             manifest_member = next((item for item in members if item.name == MANIFEST_NAME), None)
             if manifest_member is None:
                 raise ValueError("backup manifest is missing")
-            manifest_raw = archive.extractfile(manifest_member)
-            if manifest_raw is None:
+            manifest_stream = archive.extractfile(manifest_member)
+            if manifest_stream is None:
                 raise ValueError("backup manifest cannot be read")
-            manifest = json.loads(manifest_raw.read())
+            with manifest_stream:
+                manifest = json.load(manifest_stream)
             if (
                 not isinstance(manifest, dict)
                 or manifest.get("schema_version") != "smoke-detect-backup.v1"
@@ -277,12 +306,18 @@ def restore_backup(archive_path: Path, destination: Path) -> dict[str, object]:
                 stream = archive.extractfile(member)
                 if stream is None:
                     raise ValueError(f"cannot read backup member: {member.name}")
-                content = stream.read()
                 size, digest = expected[member.name]
-                actual_digest = hashlib.sha256(content).hexdigest()
-                if len(content) != size or actual_digest != digest:
+                actual_size = 0
+                actual_digest = hashlib.sha256()
+                with target.open("wb") as destination_stream:
+                    while chunk := stream.read(_COPY_CHUNK_SIZE):
+                        destination_stream.write(chunk)
+                        actual_size += len(chunk)
+                        actual_digest.update(chunk)
+                    destination_stream.flush()
+                    os.fsync(destination_stream.fileno())
+                if actual_size != size or actual_digest.hexdigest() != digest:
                     raise ValueError(f"backup integrity check failed: {member.name}")
-                target.write_bytes(content)
                 os.chmod(target, member.mode & 0o777)
         if destination.exists():
             previous_destination = (
@@ -355,11 +390,30 @@ def main() -> int:
             manifest = create_runtime_backup(
                 args.database, args.policy_config, args.cameras_config, temporary_output
             )
-            payload = temporary_output.read_bytes()
             if str(args.output) == "-":
-                sys.stdout.buffer.write(payload)
+                with temporary_output.open("rb") as source:
+                    _copy_stream(source, sys.stdout.buffer)
+                sys.stdout.buffer.flush()
             else:
-                _atomic_write(args.output, payload)
+                destination = args.output.expanduser().resolve()
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                descriptor, destination_name = tempfile.mkstemp(
+                    prefix=f".{destination.name}.", dir=destination.parent
+                )
+                os.close(descriptor)
+                destination_temp = Path(destination_name)
+                try:
+                    with (
+                        temporary_output.open("rb") as source,
+                        destination_temp.open("wb") as target,
+                    ):
+                        _copy_stream(source, target)
+                        target.flush()
+                        os.fsync(target.fileno())
+                    _publish_temp_file(destination_temp, destination)
+                finally:
+                    if destination_temp.exists():
+                        destination_temp.unlink()
                 print(json.dumps({"archive": str(args.output), **manifest}, sort_keys=True))
         return 0
     if args.command == "backup-deployment":
@@ -382,7 +436,10 @@ def main() -> int:
             )
             os.close(descriptor)
             temporary = Path(temporary_name)
-            temporary.write_bytes(sys.stdin.buffer.read())
+            with temporary.open("wb") as destination:
+                _copy_stream(sys.stdin.buffer, destination)
+                destination.flush()
+                os.fsync(destination.fileno())
             archive = temporary
         try:
             print(json.dumps(restore_runtime(archive, args.database), sort_keys=True))

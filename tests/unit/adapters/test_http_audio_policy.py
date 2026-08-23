@@ -9,6 +9,7 @@ from tp_smoke_detect.adapters.audio.http import (
     HttpAudioController,
     _NoRedirect,
     _resolve_safe_addresses,
+    _safe_address,
 )
 
 
@@ -49,6 +50,23 @@ def test_http_audio_rejects_public_address_after_dns_rebinding(
     )
     with pytest.raises(ValueError, match="public or unsafe"):
         _resolve_safe_addresses("audio-worker.site.internal", 8080)
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "169.254.169.254",
+        "0.0.0.0",
+        "192.0.2.1",
+        "198.18.0.1",
+        "fe80::1",
+        "::",
+        "ff02::1",
+        "2001:db8::1",
+    ],
+)
+def test_http_audio_rejects_special_purpose_addresses(address: str) -> None:
+    assert not _safe_address(address)
 
 
 def test_http_audio_redirects_are_disabled() -> None:

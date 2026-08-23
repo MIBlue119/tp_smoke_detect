@@ -32,7 +32,11 @@ class _RaisingAudioController:
 
 
 class _DuplicateAudioController:
+    def __init__(self) -> None:
+        self.calls = 0
+
     def send(self, command: AudioCommand) -> AudioPlaybackReceipt:
+        self.calls += 1
         return AudioPlaybackReceipt(
             command_id=str(command.command_id),
             decision_id=str(command.decision_id),
@@ -166,6 +170,46 @@ def test_duplicate_delivery_is_terminal_safety_history_for_policy_limits() -> No
         "SELECT json_extract(playback, '$.status') FROM audio_receipts ORDER BY created_at"
     ).fetchall()
     assert [row[0] for row in receipts if row[0] is not None] == ["duplicate"]
+
+
+def test_persisted_duplicate_is_terminal_and_never_calls_controller_again() -> None:
+    repository = SQLiteAuditRepository()
+    controller = _DuplicateAudioController()
+    decision = _decision()
+    repository.put_audio_receipt(
+        {
+            "receipt_id": f"audio:{decision.decision_id}",
+            "decision_id": str(decision.decision_id),
+            "camera_id": "cam-1",
+            "zone_id": "zone-a",
+            "outcome": "announced",
+            "reason_code": "announced",
+            "command_id": "command-already-delivered",
+            "playback": {"status": "duplicate"},
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    service = AudioRequestService(
+        AudioPolicy(
+            AudioPolicyConfig(
+                mode=RunMode.AUTOMATIC,
+                audio_muted=False,
+                cooldown_seconds=0,
+                hourly_audio_cap=10,
+                daily_audio_cap=10,
+            )
+        ),
+        controller,
+        repository,
+    )
+
+    result = service.request(decision, camera_id="cam-1", zone_id="zone-a", now=datetime.now(UTC))
+
+    assert result.allowed
+    assert controller.calls == 0
+    saved = repository.get_audio_receipt(f"audio:{decision.decision_id}")
+    assert saved is not None
+    assert saved["playback"]["status"] == "duplicate"
 
 
 def test_controller_exception_finalizes_reservation_before_reraising() -> None:

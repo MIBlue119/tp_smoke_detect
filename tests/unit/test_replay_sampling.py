@@ -72,6 +72,24 @@ def test_replay_event_identity_includes_recording_identity(tmp_path: Path) -> No
     assert first.candidates[0].event_id == repeat.candidates[0].event_id
 
 
+def test_legacy_replay_identity_includes_artifact_content(tmp_path: Path) -> None:
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    _store(first_root, "f0.png")
+    _store(second_root, "f0.png")
+    (second_root / "f0.png").write_bytes(PNG + b"different-recording")
+    manifest = {
+        "camera_id": "cam-1",
+        "frames": [_frame(0, 0, "f0.png")],
+    }
+
+    first = ReplayWorker(synthetic_camera(), LocalArtifactStore(first_root)).replay(manifest)
+    second = ReplayWorker(synthetic_camera(), LocalArtifactStore(second_root)).replay(manifest)
+
+    assert first.candidates[0].event_id != second.candidates[0].event_id
+    assert first.candidates[0].correlation_id != second.candidates[0].correlation_id
+
+
 def test_roi_and_excluded_zone_filter_candidates_without_media_leakage(tmp_path: Path) -> None:
     store = _store(tmp_path, "inside.png", "excluded.png", "outside.png")
     camera = synthetic_camera().model_validate(

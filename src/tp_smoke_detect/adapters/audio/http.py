@@ -30,18 +30,22 @@ from ...contracts import AudioCommand
 from ...domain.policy.audio import DEFAULT_MESSAGE_CATALOG
 from ...ports.audio import AudioPlaybackReceipt, PlaybackStatus
 
+_APPROVED_LOCAL_NETWORKS = (
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+)
+
 
 def _is_local_host(host: str) -> bool:
-    if host in {"localhost", "127.0.0.1", "::1"}:
-        return True
     try:
-        return ipaddress.ip_address(host).is_private
+        return _safe_address(host)
     except ValueError:
         try:
-            return all(
-                ipaddress.ip_address(item[4][0]).is_private
-                for item in socket.getaddrinfo(host, None)
-            )
+            return all(_safe_address(str(item[4][0])) for item in socket.getaddrinfo(host, None))
         except (OSError, ValueError):
             return False
 
@@ -65,7 +69,7 @@ def _normalize_host(host: str) -> str:
 
 def _safe_address(value: str) -> bool:
     address = ipaddress.ip_address(value)
-    return address.is_private or address.is_loopback
+    return any(address in network for network in _APPROVED_LOCAL_NETWORKS)
 
 
 def _resolve_safe_addresses(host: str, port: int) -> tuple[str, ...]:

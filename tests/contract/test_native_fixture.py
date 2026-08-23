@@ -20,9 +20,10 @@ def test_built_native_producer_output_is_v1_contract() -> None:
     )
     binary = next((path for path in binaries if path.is_file()), None)
     if binary is None:
-        import pytest
-
-        pytest.skip("native qualification binary has not been built")
+        raise AssertionError(
+            "native qualification binary is unavailable; build native/deepstream before "
+            "running the contract gate"
+        )
     completed = subprocess.run([str(binary)], check=True, capture_output=True, text=True)
     payload = json.loads(completed.stdout.strip().splitlines()[-1])
     parsed = CandidateEnvelope.model_validate(payload)

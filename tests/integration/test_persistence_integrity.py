@@ -244,6 +244,28 @@ def test_runtime_backup_is_a_consistent_sqlite_snapshot_with_mounted_configs(
     assert (restored / "config" / "cameras.yaml").read_text(encoding="utf-8") == "cameras: []\n"
 
 
+def test_backup_deployment_streams_archive_to_atomic_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backup = _backup_module()
+    output = tmp_path / "deployment.tar.gz"
+    compose_file = tmp_path / "compose.yaml"
+    compose_file.write_text("services: {}\n", encoding="utf-8")
+    payload = b"\x1f\x8b" + (b"streamed archive" * 100_000)
+
+    def fake_run(*_args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        stdout = kwargs["stdout"]
+        assert hasattr(stdout, "write")
+        stdout.write(payload)
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(backup.subprocess, "run", fake_run)
+    result = backup.backup_deployment(compose_file, "smoke-detect", output)
+
+    assert result["size"] == len(payload)
+    assert output.read_bytes() == payload
+
+
 def test_runtime_restore_replaces_database_atomically_after_integrity_check(
     tmp_path: Path,
 ) -> None:

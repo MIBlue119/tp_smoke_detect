@@ -918,7 +918,7 @@ class SQLiteAuditRepository:
             ).fetchone()
             if current is not None:
                 current_playback = json.loads(current[0]) if current[0] is not None else {}
-                if current_playback.get("status") == "accepted":
+                if current_playback.get("status") in {"accepted", "duplicate"}:
                     self.connection.commit()
                     existing = cast(dict[str, Any], _normalize_persisted(json.loads(current[1])))
                     existing["reservation_status"] = "existing"
