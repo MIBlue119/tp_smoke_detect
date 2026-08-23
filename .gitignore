@@ -11,6 +11,6 @@ dist/
 build/
 *.egg-info/
 .env
-models/
+/models/
 data/private/
 artifacts/private/
