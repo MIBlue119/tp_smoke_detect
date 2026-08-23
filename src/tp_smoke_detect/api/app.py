@@ -9,13 +9,17 @@ from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 
+from ..adapters.audio.fake import FakeAudioController
 from ..adapters.persistence.sqlite import SQLiteAuditRepository
+from ..application.request_audio import AudioRequestService
 from ..contracts import RunMode
+from ..domain.policy.audio import AudioPolicy, AudioPolicyConfig
 from ..ports.repositories import AuditRepository
 from ..settings import AppSettings, CameraProfile
 from .models import (
     ArtifactCreate,
     AudioMuteCreate,
+    AudioRequestCreate,
     CameraUpdate,
     EvaluationCreate,
     EvaluationResponse,
@@ -83,6 +87,7 @@ def create_app(
     *,
     settings: AppSettings | None = None,
     artifact_root: Path | str | None = None,
+    audio_controller: object | None = None,
 ) -> FastAPI:
     """Build an app with explicit dependencies, suitable for tests and ASGI."""
 
@@ -94,6 +99,7 @@ def create_app(
     app.state.repository = repo
     app.state.artifact_root = root
     app.state.settings = app_settings
+    app.state.audio_controller = audio_controller or FakeAudioController()
 
     def get_repository() -> AuditRepository:
         return cast(AuditRepository, app.state.repository)
@@ -254,6 +260,86 @@ def create_app(
                 status_code=422, detail="scope_id is required for zone and camera mutes"
             )
         return repository.put_mute({"mute_id": str(uuid4()), **request.model_dump(mode="json")})
+
+    @app.post("/v1/audio/requests", status_code=201, tags=["policy"])
+    def request_audio(request: AudioRequestCreate, repository: Repo) -> dict[str, object]:
+        decision = repository.get_decision(str(request.decision_id))
+        if decision is None:
+            raise HTTPException(status_code=404, detail="decision not found")
+        camera_id = str(decision["camera_id"])
+        policy_settings = app.state.settings.policy
+        quiet_hours = None
+        if (
+            policy_settings.quiet_hours_start is not None
+            and policy_settings.quiet_hours_end is not None
+        ):
+            quiet_hours = (policy_settings.quiet_hours_start, policy_settings.quiet_hours_end)
+        current_mode = repository.current_mode()
+        mode = policy_settings.mode
+        if current_mode and current_mode.get("mode") in {item.value for item in RunMode}:
+            mode = RunMode(str(current_mode["mode"]))
+        policy = AudioPolicy(
+            AudioPolicyConfig(
+                mode=mode,
+                audio_muted=policy_settings.audio_muted,
+                cooldown_seconds=policy_settings.cooldown_seconds,
+                hourly_audio_cap=policy_settings.hourly_audio_cap,
+                daily_audio_cap=policy_settings.daily_audio_cap,
+                quiet_hours=quiet_hours,
+                policy_revision=policy_settings.policy_revision,
+                message_id=policy_settings.audio_message_id,
+                command_ttl_seconds=policy_settings.audio_command_ttl_seconds,
+            )
+        )
+        now = request.now or datetime.now(UTC)
+        active_mutes = [
+            mute
+            for mute in repository.list_mutes()
+            if mute.get("expires_at") is None
+            or datetime.fromisoformat(str(mute["expires_at"])) > now
+        ]
+        site_muted = any(mute.get("scope") == "site" for mute in active_mutes)
+        zone_muted = any(
+            mute.get("scope") == "zone" and mute.get("scope_id") == request.zone_id
+            for mute in active_mutes
+        )
+        camera_muted = any(
+            mute.get("scope") == "camera" and mute.get("scope_id") == camera_id
+            for mute in active_mutes
+        )
+        receipts = repository.list_audio_receipts(zone_id=request.zone_id)
+        accepted = [
+            item for item in receipts if (item.get("playback") or {}).get("status") == "accepted"
+        ]
+        announced_at = tuple(datetime.fromisoformat(str(item["created_at"])) for item in accepted)
+        hour_start = now.timestamp() - 3600
+        hourly_count = sum(
+            datetime.fromisoformat(str(item["created_at"])).timestamp() >= hour_start
+            for item in accepted
+        )
+        daily_count = sum(
+            datetime.fromisoformat(str(item["created_at"])).date() == now.date()
+            for item in accepted
+        )
+        result = AudioRequestService(policy, app.state.audio_controller, repository).request(
+            decision,
+            camera_id=camera_id,
+            zone_id=request.zone_id,
+            now=now,
+            announced_at=announced_at,
+            hourly_count=hourly_count,
+            daily_count=daily_count,
+            site_muted=site_muted,
+            zone_muted=zone_muted,
+            camera_muted=camera_muted,
+            camera_suspended=repository.false_announcement_count(camera_id) > 0,
+        )
+        return {
+            "decision_id": str(request.decision_id),
+            "outcome": result.outcome,
+            "reason_code": result.reason_code.value,
+            "command": result.command.model_dump(mode="json") if result.command else None,
+        }
 
     @app.get("/v1/models", tags=["models"])
     def models(repository: Repo) -> list[dict[str, object]]:

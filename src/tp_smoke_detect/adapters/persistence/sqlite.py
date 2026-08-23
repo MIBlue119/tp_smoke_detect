@@ -116,6 +116,20 @@ class SQLiteAuditRepository:
                 created_at TEXT NOT NULL,
                 payload TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS audio_receipts (
+                receipt_id TEXT PRIMARY KEY,
+                decision_id TEXT NOT NULL,
+                camera_id TEXT NOT NULL,
+                zone_id TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                reason_code TEXT NOT NULL,
+                command_id TEXT,
+                playback TEXT,
+                created_at TEXT NOT NULL,
+                payload TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_audio_receipts_zone_created
+                ON audio_receipts(zone_id, created_at);
             CREATE TABLE IF NOT EXISTS model_releases (
                 model_id TEXT PRIMARY KEY,
                 payload TEXT NOT NULL,
@@ -359,6 +373,68 @@ class SQLiteAuditRepository:
         )
         self.connection.commit()
         return item
+
+    def list_mutes(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT payload FROM mutes ORDER BY created_at DESC"
+        ).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def put_audio_receipt(self, receipt: dict[str, Any]) -> dict[str, Any]:
+        """Insert once; a decision's audio outcome is immutable."""
+
+        item = dict(receipt)
+        item.setdefault("created_at", _now())
+        self.connection.execute(
+            """INSERT OR IGNORE INTO audio_receipts
+            (receipt_id,decision_id,camera_id,zone_id,outcome,reason_code,command_id,
+             playback,created_at,payload) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                item["receipt_id"],
+                item["decision_id"],
+                item["camera_id"],
+                item["zone_id"],
+                item["outcome"],
+                item["reason_code"],
+                item.get("command_id"),
+                _json(item.get("playback")) if item.get("playback") is not None else None,
+                item["created_at"],
+                _json(item),
+            ),
+        )
+        self.connection.commit()
+        return self.get_audio_receipt(str(item["receipt_id"])) or item
+
+    def get_audio_receipt(self, receipt_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT payload FROM audio_receipts WHERE receipt_id=?", (receipt_id,)
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def list_audio_receipts(
+        self, *, camera_id: str | None = None, zone_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        values: list[str] = []
+        if camera_id is not None:
+            clauses.append("camera_id=?")
+            values.append(camera_id)
+        if zone_id is not None:
+            clauses.append("zone_id=?")
+            values.append(zone_id)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self.connection.execute(
+            f"SELECT payload FROM audio_receipts{where} ORDER BY created_at DESC", values
+        ).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def false_announcement_count(self, camera_id: str) -> int:
+        row = self.connection.execute(
+            """SELECT COUNT(*) FROM reviews r JOIN decisions d ON d.decision_id=r.decision_id
+            WHERE d.camera_id=? AND r.label='false_positive'""",
+            (camera_id,),
+        ).fetchone()
+        return int(row[0]) if row else 0
 
     def list_models(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(

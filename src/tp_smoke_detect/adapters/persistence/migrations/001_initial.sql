@@ -75,3 +75,19 @@ CREATE TABLE IF NOT EXISTS mutes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     payload JSONB NOT NULL
 );
+
+-- U8 immutable policy/playback receipt.  One decision has one audio outcome.
+CREATE TABLE IF NOT EXISTS audio_receipts (
+    receipt_id VARCHAR(255) PRIMARY KEY,
+    decision_id UUID NOT NULL REFERENCES decisions(decision_id),
+    camera_id VARCHAR(128) NOT NULL,
+    zone_id VARCHAR(128) NOT NULL,
+    outcome VARCHAR(32) NOT NULL,
+    reason_code VARCHAR(64) NOT NULL,
+    command_id UUID,
+    playback JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    payload JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS audio_receipts_zone_created
+    ON audio_receipts(zone_id, created_at DESC);
