@@ -41,8 +41,8 @@ errors remain the primary exception if finalization fails.
 
 ## verification
 
-The focused adversarial tests cover all of the above, with 17 passing. The full
-suite has 128 passing and one expected target-hardware skip. Ruff, MyPy, schema
+The focused adversarial tests cover all of the above, with 18 passing. The full
+suite has 129 passing and one expected target-hardware skip. Ruff, MyPy, schema
 generation, config validation, synthetic demo, Compose config, and native Debug
 and Release CTest all pass.
 

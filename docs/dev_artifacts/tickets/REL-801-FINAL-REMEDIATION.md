@@ -26,7 +26,7 @@ Status: implemented and locally verified on `release/0.1.0`
 uv run ruff format --check .                         PASS
 uv run ruff check .                                  PASS
 uv run mypy src tests                                 PASS
-uv run pytest -q                                      128 passed, 1 skipped
+uv run pytest -q                                      129 passed, 1 skipped
 uv run pytest tests/integration/test_final_release_hardening.py \
   tests/integration/test_decision_to_audio.py -q     17 passed
 uv run smoke-detect schema --output <temporary-dir>  PASS (diff clean)
@@ -37,7 +37,7 @@ cmake ... -DCMAKE_BUILD_TYPE=Debug; ctest         1/1 passed
 cmake ... -DCMAKE_BUILD_TYPE=Release; ctest       1/1 passed
 ```
 
-The one skipped test is the deliberately disabled target-hardware
+The focused adversarial suite is 18 passed. The one skipped test is the deliberately disabled target-hardware
 qualification. GPU/DeepStream/Triton capacity, model/site quality, image
 digest/SBOM, legal/agency, retention, and physical-audio approvals remain
 external release gates.
