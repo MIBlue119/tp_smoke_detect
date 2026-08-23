@@ -1,0 +1,59 @@
+"""Persistence ports used by the API and application layer.
+
+The service deliberately depends on this small interface instead of a database
+client.  SQLite is used by the CPU reference path and tests; the PostgreSQL
+migration in ``adapters/persistence/migrations`` is the production boundary.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Protocol
+
+
+class AuditRepository(Protocol):
+    """Append-only facts and query operations required by the v1 API."""
+
+    def health(self) -> bool: ...
+
+    def close(self) -> None: ...
+
+    def put_decision(self, decision: dict[str, Any]) -> dict[str, Any]: ...
+
+    def get_decision(self, decision_id: str) -> dict[str, Any] | None: ...
+
+    def list_decisions(
+        self,
+        *,
+        camera_id: str | None = None,
+        outcome: str | None = None,
+        reason: str | None = None,
+        before: datetime | None = None,
+        after: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]: ...
+
+    def append_review(self, review: dict[str, Any]) -> dict[str, Any]: ...
+
+    def append_mode_change(self, change: dict[str, Any]) -> dict[str, Any]: ...
+
+    def current_mode(self) -> dict[str, Any] | None: ...
+
+    def upsert_camera(self, camera: dict[str, Any]) -> dict[str, Any]: ...
+
+    def list_cameras(self) -> list[dict[str, Any]]: ...
+
+    def put_artifact(self, artifact: dict[str, Any]) -> dict[str, Any]: ...
+
+    def get_artifact(self, artifact_id: str) -> dict[str, Any] | None: ...
+
+    def put_evaluation(self, evaluation: dict[str, Any]) -> dict[str, Any]: ...
+
+    def get_evaluation(self, evaluation_id: str) -> dict[str, Any] | None: ...
+
+    def get_evaluation_by_idempotency(self, key: str) -> dict[str, Any] | None: ...
+
+    def put_mute(self, mute: dict[str, Any]) -> dict[str, Any]: ...
+
+    def list_models(self) -> list[dict[str, Any]]: ...

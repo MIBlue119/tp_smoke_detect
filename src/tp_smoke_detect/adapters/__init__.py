@@ -1,1 +1,1 @@
-"""Runtime adapter implementations."""
+"""Infrastructure and runtime adapter implementations."""
