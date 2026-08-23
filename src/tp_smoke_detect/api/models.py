@@ -25,6 +25,7 @@ class ArtifactCreate(APIModel):
     artifact_id: str | None = Field(default=None, min_length=1, max_length=128)
     path: str = Field(min_length=1, max_length=1024)
     media_type: Literal["video/mp4", "video/webm", "image/jpeg", "image/png"]
+    media_class: Literal["raw_media", "event_clip"] = "event_clip"
     size_bytes: int = Field(ge=0, le=500_000_000)
 
 

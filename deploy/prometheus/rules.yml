@@ -1,0 +1,26 @@
+groups:
+  - name: smoke-detect-operations
+    rules:
+      - alert: SmokeDetectCameraStale
+        expr: time() - smoke_camera_last_good_frame_timestamp_seconds > 30
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Camera stream is stale
+          description: A configured camera has not produced a good frame for two minutes.
+      - alert: SmokeDetectQueueBacklog
+        expr: smoke_camera_queue_depth > 24
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Camera queue is approaching its bound
+          description: A camera queue is above 75 percent of the CPU profile bound.
+      - alert: SmokeDetectDependencyDegraded
+        expr: increase(smoke_degraded_transitions_total[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Smoke detection dependency degraded
+          description: A database, broker, model, artifact store, audio, or camera component changed state.

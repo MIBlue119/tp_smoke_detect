@@ -7,10 +7,14 @@ from pathlib import Path
 from typing import Annotated, cast
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
+from fastapi.responses import PlainTextResponse
 
 from ..adapters.persistence.sqlite import SQLiteAuditRepository
 from ..contracts import RunMode
+from ..observability.health import HealthRegistry, HealthState
+from ..observability.metrics import OperationalMetrics
+from ..observability.structured import correlation_id
 from ..ports.repositories import AuditRepository
 from ..settings import AppSettings, CameraProfile
 from .models import (
@@ -94,6 +98,9 @@ def create_app(
     app.state.repository = repo
     app.state.artifact_root = root
     app.state.settings = app_settings
+    app.state.metrics = OperationalMetrics()
+    app.state.health = HealthRegistry(app.state.metrics)
+    app.state.health.set_component("database", HealthState.HEALTHY)
 
     def get_repository() -> AuditRepository:
         return cast(AuditRepository, app.state.repository)
@@ -107,13 +114,36 @@ def create_app(
     @app.get("/health/ready", tags=["health"])
     def ready(repository: Repo) -> dict[str, object]:
         healthy = repository.health()
+        app.state.health.set_component(
+            "database",
+            HealthState.HEALTHY if healthy else HealthState.DEGRADED,
+            message=None if healthy else "database health check failed",
+        )
+        snapshot = app.state.health.snapshot()
         payload: dict[str, object] = {
             "status": "ready" if healthy else "degraded",
+            # Keep the original boolean database component for API clients;
+            # richer states live in the additive component_health field.
             "components": {"database": healthy},
+            "component_health": snapshot["components"],
+            "cameras": snapshot["cameras"],
+            "affected_camera_count": snapshot["affected_camera_count"],
+            "queue_depth": snapshot["queue_depth"],
+            "last_successful_activity": snapshot["last_successful_activity"],
         }
         if not healthy:
             raise HTTPException(status_code=503, detail=payload)
         return payload
+
+    @app.get("/metrics", response_class=PlainTextResponse, tags=["health"])
+    def metrics() -> Response:
+        """Expose bounded operational metrics for a local Prometheus scrape."""
+
+        with correlation_id():
+            return PlainTextResponse(
+                app.state.metrics.render(),
+                media_type="text/plain; version=0.0.4; charset=utf-8",
+            )
 
     @app.get("/v1/capabilities", tags=["service"])
     def capabilities() -> dict[str, object]:
@@ -187,6 +217,9 @@ def create_app(
                 else None
             )
         saved_decision = repository.put_decision(decision)
+        app.state.metrics.decision(
+            str(saved_decision["outcome"]), str(saved_decision["reason_codes"][0])
+        )
         result = {"decision": saved_decision}
         saved = repository.put_evaluation(
             {
