@@ -97,6 +97,18 @@ class SQLiteAuditRepository:
                 created_at TEXT NOT NULL,
                 payload TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS retention_audits (
+                audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                artifact_id TEXT NOT NULL,
+                media_class TEXT NOT NULL,
+                action TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE(artifact_id, action, status)
+            );
+            CREATE INDEX IF NOT EXISTS idx_retention_audits_artifact
+                ON retention_audits(artifact_id, created_at);
             CREATE TABLE IF NOT EXISTS evaluations (
                 evaluation_id TEXT PRIMARY KEY,
                 status TEXT NOT NULL,
@@ -302,6 +314,134 @@ class SQLiteAuditRepository:
         )
         self.connection.commit()
         return item
+
+    @staticmethod
+    def _artifact_media_class(item: dict[str, Any]) -> str:
+        value = item.get("media_class")
+        if value in {"raw_media", "event_clip", "metadata"}:
+            return str(value)
+        # Existing API records predate explicit lifecycle classes.  Video
+        # artifacts are event clips by default; callers can opt into raw media
+        # by setting media_class in the payload.
+        return "event_clip" if str(item.get("media_type", "")).startswith("video/") else "raw_media"
+
+    def list_retention_candidates(
+        self, *, cutoffs: dict[str, datetime], now: datetime
+    ) -> list[dict[str, Any]]:
+        """Return expired, undeleted artifacts with their lifecycle class."""
+
+        rows = self.connection.execute(
+            "SELECT * FROM artifacts WHERE deleted = 0 ORDER BY created_at"
+        ).fetchall()
+        candidates: list[dict[str, Any]] = []
+        for row in rows:
+            item = json.loads(row["payload"])
+            item.update(
+                {
+                    "artifact_id": row["artifact_id"],
+                    "path": row["path"],
+                    "created_at": row["created_at"],
+                    "deleted": bool(row["deleted"]),
+                }
+            )
+            media_class = self._artifact_media_class(item)
+            if media_class not in cutoffs:
+                continue
+            try:
+                created = datetime.fromisoformat(str(item["created_at"])).astimezone(UTC)
+            except ValueError:
+                continue
+            if created < cutoffs[media_class]:
+                item["media_class"] = media_class
+                candidates.append(item)
+        return candidates
+
+    def finalize_artifact_deletion(
+        self, artifact_id: str, *, media_class: str, deleted_at: datetime
+    ) -> bool:
+        """Atomically mark an artifact deleted and write its durable audit."""
+
+        timestamp = deleted_at.astimezone(UTC).isoformat()
+        with self.connection:
+            row = self.connection.execute(
+                "SELECT deleted FROM artifacts WHERE artifact_id = ?", (artifact_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"artifact not found: {artifact_id}")
+            changed = not bool(row[0])
+            self.connection.execute(
+                "UPDATE artifacts SET deleted = 1, payload = json_set(payload, '$.deleted', 1) "
+                "WHERE artifact_id = ?",
+                (artifact_id,),
+            )
+            self.connection.execute(
+                """INSERT OR IGNORE INTO retention_audits
+                (artifact_id,media_class,action,status,error,created_at)
+                VALUES (?,?,?,?,?,?)""",
+                (artifact_id, media_class, "delete", "deleted", None, timestamp),
+            )
+        return changed
+
+    def append_retention_audit(self, audit: dict[str, Any]) -> dict[str, Any]:
+        item = dict(audit)
+        item.setdefault("action", "delete")
+        item.setdefault("status", "failed")
+        item.setdefault("created_at", _now())
+        timestamp = item["created_at"]
+        if isinstance(timestamp, datetime):
+            timestamp = timestamp.astimezone(UTC).isoformat()
+        with self.connection:
+            self.connection.execute(
+                """INSERT INTO retention_audits
+                (artifact_id,media_class,action,status,error,created_at)
+                VALUES (?,?,?,?,?,?)""",
+                (
+                    item["artifact_id"],
+                    item["media_class"],
+                    item["action"],
+                    item["status"],
+                    item.get("error"),
+                    timestamp,
+                ),
+            )
+        item["created_at"] = timestamp
+        return item
+
+    def list_retention_audits(self, artifact_id: str | None = None) -> list[dict[str, Any]]:
+        if artifact_id:
+            rows = self.connection.execute(
+                "SELECT * FROM retention_audits WHERE artifact_id=? ORDER BY created_at",
+                (artifact_id,),
+            ).fetchall()
+        else:
+            rows = self.connection.execute(
+                "SELECT * FROM retention_audits ORDER BY created_at"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def delete_expired_metadata(self, *, cutoff: datetime, now: datetime) -> int:
+        """Delete old decision metadata after media retention has run.
+
+        The clip deletion audit is independent, so an event's decision remains
+        queryable when only its clip clock has expired.  Once the metadata clock
+        expires, reviews and decisions are removed together to preserve FK
+        integrity.  ``now`` is accepted to keep repository adapters uniform.
+        """
+
+        del now
+        threshold = cutoff.astimezone(UTC).isoformat()
+        with self.connection:
+            rows = self.connection.execute(
+                "SELECT decision_id FROM decisions WHERE created_at < ?", (threshold,)
+            ).fetchall()
+            if not rows:
+                return 0
+            decision_ids = [str(row[0]) for row in rows]
+            self.connection.executemany(
+                "DELETE FROM reviews WHERE decision_id = ?", ((value,) for value in decision_ids)
+            )
+            self.connection.execute("DELETE FROM decisions WHERE created_at < ?", (threshold,))
+        return len(decision_ids)
 
     def get_artifact(self, artifact_id: str) -> dict[str, Any] | None:
         row = self.connection.execute(

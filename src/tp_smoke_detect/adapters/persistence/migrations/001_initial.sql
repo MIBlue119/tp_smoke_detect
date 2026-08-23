@@ -55,6 +55,19 @@ CREATE TABLE IF NOT EXISTS artifacts (
     payload JSONB NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS retention_audits (
+    audit_id BIGSERIAL PRIMARY KEY,
+    artifact_id VARCHAR(128) NOT NULL,
+    media_class VARCHAR(32) NOT NULL,
+    action VARCHAR(32) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (artifact_id, action, status)
+);
+CREATE INDEX IF NOT EXISTS retention_audits_artifact_created
+    ON retention_audits(artifact_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS evaluations (
     evaluation_id UUID PRIMARY KEY,
     status VARCHAR(16) NOT NULL,
