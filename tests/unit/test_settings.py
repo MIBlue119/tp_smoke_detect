@@ -65,3 +65,25 @@ def test_example_yaml_files_load() -> None:
     for path in Path("configs").glob("*.example.yaml"):
         settings = load_settings(path)
         assert settings.service_name == "tp-smoke-detect"
+
+
+def test_mounted_policy_and_camera_yaml_merge_before_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    policy = tmp_path / "policy.yaml"
+    policy.write_text("policy:\n  mode: shadow\n  audio_muted: false\n", encoding="utf-8")
+    cameras = tmp_path / "cameras.yaml"
+    cameras.write_text(
+        "cameras:\n  - camera_id: cam-mounted\n    zone_id: lobby\n"
+        "    roi: [{x: 0, y: 0}, {x: 1, y: 0}, {x: 1, y: 1}]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SMOKE_DETECT_ENVIRONMENT", "production")
+    monkeypatch.setenv("SMOKE_DETECT_POLICY__AUDIO_MUTED", "true")
+
+    settings = load_settings(policy_path=policy, cameras_path=cameras)
+
+    assert settings.environment == "production"
+    assert settings.policy.mode is RunMode.SHADOW
+    assert settings.policy.audio_muted is True
+    assert [camera.camera_id for camera in settings.cameras] == ["cam-mounted"]

@@ -2,14 +2,15 @@
 
 Only the versioned command JSON is sent.  The adapter accepts no arbitrary
 message text, validates expiry locally, and keeps one idempotency key per
-command.  URL policy belongs to deployment; HTTPS or loopback HTTP is allowed
-for the site-local worker, while remote HTTP endpoints are rejected.
+command.  HTTPS is not an egress boundary: loopback/private hosts are allowed
+by default and DNS names require an exact configured internal allowlist entry.
 """
 
 from __future__ import annotations
 
 import ipaddress
 import json
+import re
 import socket
 from datetime import UTC, datetime
 from urllib.parse import urlparse
@@ -35,6 +36,23 @@ def _is_local_host(host: str) -> bool:
             return False
 
 
+_DNS_HOST = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
+
+
+def _normalize_host(host: str) -> str:
+    normalized = host.rstrip(".").lower()
+    if not normalized:
+        raise ValueError("audio endpoint host is required")
+    try:
+        ipaddress.ip_address(normalized)
+    except ValueError:
+        if len(normalized) > 253 or _DNS_HOST.fullmatch(normalized) is None:
+            raise ValueError("audio endpoint host is not DNS-safe") from None
+    return normalized
+
+
 class HttpAudioController:
     def __init__(
         self,
@@ -42,17 +60,31 @@ class HttpAudioController:
         *,
         timeout_seconds: float = 2.0,
         catalog: frozenset[str] | None = None,
+        allowed_hosts: frozenset[str] | set[str] | tuple[str, ...] | None = None,
     ) -> None:
         parsed = urlparse(endpoint)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
             raise ValueError("audio endpoint must be an HTTP(S) URL")
-        if parsed.scheme == "http" and not _is_local_host(parsed.hostname or ""):
-            raise ValueError("plain HTTP audio endpoints must be site-local")
+        host = _normalize_host(parsed.hostname or "")
+        configured_hosts = frozenset(_normalize_host(item) for item in (allowed_hosts or ()))
+        # HTTPS does not make a public host safe.  Keep the default reference
+        # adapter loopback/private-only and require exact operator allowlisting
+        # for internal DNS names (avoiding suffix or wildcard matches).
+        if not _is_local_host(host) and host not in configured_hosts:
+            raise ValueError("audio endpoint host is not in the internal allowlist")
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self.endpoint = endpoint
         self.timeout_seconds = timeout_seconds
         self.catalog = catalog or frozenset(DEFAULT_MESSAGE_CATALOG)
+        self.allowed_hosts = configured_hosts
 
     def send(self, command: AudioCommand) -> AudioPlaybackReceipt:
         now = datetime.now(UTC)

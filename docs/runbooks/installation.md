@@ -34,27 +34,27 @@ approved wheelhouse rather than enabling runtime network access.
 
 ## 3. Local Compose reference deployment
 
-Create the ignored secret file through the site secret-management procedure.
-For a disposable local smoke test only:
+The default profile is a CPU/reference deployment: the API uses its wired
+SQLite audit repository and Prometheus scrapes local metrics. PostgreSQL and
+MQTT are not started because this release does not ship their adapters. They
+remain available only under the explicitly future `future-site` profile.
+For a disposable local smoke test:
 
-    mkdir -p deploy/secrets
-    umask 077
-    openssl rand -hex 32 > deploy/secrets/postgres_password.txt
     docker compose -f deploy/compose.yaml config --quiet
     docker compose -f deploy/compose.yaml up -d
     curl --fail http://127.0.0.1:8000/health/live
     curl --fail http://127.0.0.1:8000/health/ready
 
-The secret is ignored and must be removed from a disposable host after
-docker compose down -v. A real site must inject it from the site secret
-store, not generate it in an operator shell. The Compose network is internal;
-the API and Prometheus ports bind to loopback by default.
+The Compose network is internal;
+the API and Prometheus ports bind to loopback by default. The read-only policy
+and camera YAML mounts are loaded at API bootstrap; `SMOKE_DETECT_*` values in
+Compose override only explicitly named YAML fields.
 
 Inspect startup:
 
     docker compose -f deploy/compose.yaml ps
     docker compose -f deploy/compose.yaml logs --tail=100 smoke-detect
-    docker compose -f deploy/compose.yaml logs --tail=100 postgres mqtt prometheus
+    docker compose -f deploy/compose.yaml logs --tail=100 prometheus
 
 Do not start the audio profile or change the site mode during installation.
 The media profile is a reference boundary and is not DeepStream qualification.
@@ -82,7 +82,9 @@ transfer only the reviewed bundle and an approved image archive:
 Compose config can prove syntax, but cannot prove image provenance, target
 throughput, model quality, legal approval, or public-audio readiness.
 Production installation remains blocked while an image digest, SBOM,
-model-origin, retention, or agency gate is unresolved.
+model-origin, retention, or agency gate is unresolved. The future-site profile
+must not be enabled until PostgreSQL/MQTT adapters and their acceptance tests
+are released.
 
 ## 5. Uninstall and preserve evidence
 

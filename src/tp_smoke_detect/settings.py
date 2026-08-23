@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from datetime import time
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -82,17 +83,85 @@ class AppSettings(BaseSettings):
     cameras: list[CameraProfile] = Field(default_factory=list)
 
 
-def load_settings(path: Path | str | None = None) -> AppSettings:
-    """Load optional YAML then apply environment overrides through Pydantic."""
+def _merge_mapping(target: dict[str, Any], source: dict[str, Any]) -> None:
+    """Merge nested YAML mappings without allowing a file to erase siblings."""
 
-    if path is None:
-        return AppSettings()
-    config_path = Path(path)
-    with config_path.open("r", encoding="utf-8") as handle:
+    for key, value in source.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _merge_mapping(target[key], value)
+        else:
+            target[key] = value
+
+
+def _set_nested(mapping: dict[str, Any], keys: list[str], value: str) -> None:
+    current = mapping
+    for key in keys[:-1]:
+        next_value = current.get(key)
+        if not isinstance(next_value, dict):
+            next_value = {}
+            current[key] = next_value
+        current = next_value
+    current[keys[-1]] = value
+
+
+def _environment_overrides(document: dict[str, Any]) -> dict[str, Any]:
+    """Return YAML plus only known SMOKE_DETECT_* environment overrides.
+
+    Pydantic's settings source cannot be layered after an arbitrary YAML
+    document, so we preserve its normal nested delimiter and let the final
+    model validation perform the same scalar coercion (bools, integers,
+    times, and JSON lists) as ``BaseSettings``.
+    """
+
+    known = {"service_name", "environment", "database", "artifact_root", "policy", "cameras"}
+    for name, raw_value in os.environ.items():
+        if not name.startswith("SMOKE_DETECT_") or name in {
+            "SMOKE_DETECT_CONFIG",
+            "SMOKE_DETECT_POLICY_CONFIG",
+            "SMOKE_DETECT_CAMERAS_CONFIG",
+        }:
+            continue
+        suffix = name.removeprefix("SMOKE_DETECT_")
+        keys = [part.lower() for part in suffix.split("__")]
+        if keys[0] not in known:
+            continue
+        _set_nested(document, keys, raw_value)
+    return document
+
+
+def _read_yaml(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
         document = yaml.safe_load(handle) or {}
     if not isinstance(document, dict):
-        raise ValueError("configuration root must be a YAML mapping")
-    return AppSettings.model_validate(document)
+        raise ValueError(f"configuration root must be a YAML mapping: {path}")
+    return document
+
+
+def load_settings(
+    path: Path | str | None = None,
+    *,
+    policy_path: Path | str | None = None,
+    cameras_path: Path | str | None = None,
+) -> AppSettings:
+    """Load YAML configuration, then apply explicit environment overrides.
+
+    ``SMOKE_DETECT_CONFIG`` can point at one combined file.  Deployments that
+    keep policy and camera profiles as separate read-only mounts may provide
+    ``SMOKE_DETECT_POLICY_CONFIG`` and ``SMOKE_DETECT_CAMERAS_CONFIG``.  The
+    latter files are merged before environment values, so operators can safely
+    change a scalar without silently discarding the mounted camera list.
+    """
+
+    document: dict[str, Any] = {}
+    candidates = (
+        path or os.environ.get("SMOKE_DETECT_CONFIG"),
+        policy_path or os.environ.get("SMOKE_DETECT_POLICY_CONFIG"),
+        cameras_path or os.environ.get("SMOKE_DETECT_CAMERAS_CONFIG"),
+    )
+    for candidate in candidates:
+        if candidate is not None:
+            _merge_mapping(document, _read_yaml(Path(candidate)))
+    return AppSettings.model_validate(_environment_overrides(document))
 
 
 __all__ = ["AppSettings", "CameraProfile", "PolicySettings", "load_settings"]

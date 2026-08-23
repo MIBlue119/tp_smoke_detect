@@ -15,12 +15,12 @@ images:
   postgres:
     reference: postgres:16.4-alpine
     digest: "REQUIRED-BEFORE-RELEASE"
-    purpose: production-audit-store
+    purpose: future-site-audit-store (not in default CPU profile)
     runtime_network: internal-only
   mqtt:
     reference: eclipse-mosquitto:2.0.20
     digest: "REQUIRED-BEFORE-RELEASE"
-    purpose: metadata-only-candidate-bus
+    purpose: future-site-metadata-only-candidate-bus (not in default CPU profile)
     runtime_network: internal-only
   prometheus:
     reference: prom/prometheus:v2.54.1

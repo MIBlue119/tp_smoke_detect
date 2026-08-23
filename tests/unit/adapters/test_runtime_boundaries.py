@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping
 from uuid import uuid4
 
@@ -23,6 +24,33 @@ def test_onnx_adapter_is_dependency_optional_and_fail_closed() -> None:
     receipt = provider.infer(request(InferenceRole.OBJECT))
     assert receipt.status is InferenceStatus.UNAVAILABLE
     assert receipt.result is None
+
+
+def test_onnx_deadline_requires_cooperative_runner() -> None:
+    def non_cooperative(_request: InferenceRequest) -> object:
+        time.sleep(0.02)
+        return {"label": "cigarette", "confidence": 0.9}
+
+    provider = OnnxInferenceProvider(
+        role=InferenceRole.OBJECT, revision="onnx-v1", runner=non_cooperative
+    )
+    receipt = provider.infer(request(InferenceRole.OBJECT), timeout_ms=1)
+
+    assert receipt.status is InferenceStatus.TIMEOUT
+    assert receipt.reason_codes == ["onnx_runner_not_cooperative"]
+
+
+def test_onnx_deadline_is_passed_to_cooperative_runner() -> None:
+    def cooperative(_request: InferenceRequest, *, deadline: float) -> object:
+        assert deadline > time.monotonic()
+        return {"label": "cigarette", "confidence": 0.9}
+
+    provider = OnnxInferenceProvider(
+        role=InferenceRole.OBJECT, revision="onnx-v1", runner=cooperative
+    )
+    receipt = provider.infer(request(InferenceRole.OBJECT), timeout_ms=100)
+
+    assert receipt.status is InferenceStatus.OK
 
 
 def test_openai_compatible_adapter_rejects_revision_mismatch() -> None:

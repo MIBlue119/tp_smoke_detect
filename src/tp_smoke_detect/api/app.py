@@ -19,7 +19,7 @@ from ..observability.health import HealthRegistry, HealthState
 from ..observability.metrics import OperationalMetrics
 from ..observability.structured import correlation_id
 from ..ports.repositories import AuditRepository
-from ..settings import AppSettings, CameraProfile
+from ..settings import AppSettings, CameraProfile, load_settings
 from .models import (
     ArtifactCreate,
     AudioMuteCreate,
@@ -95,7 +95,10 @@ def create_app(
 ) -> FastAPI:
     """Build an app with explicit dependencies, suitable for tests and ASGI."""
 
-    app_settings = settings or AppSettings()
+    # Keep bootstrap configuration explicit and side-effect free for tests,
+    # while allowing the container's read-only YAML mounts to be authoritative
+    # before normal SMOKE_DETECT_* environment overrides are applied.
+    app_settings = settings or load_settings()
     repo: AuditRepository = repository or SQLiteAuditRepository(app_settings.database)
     root = Path(artifact_root or app_settings.artifact_root)
     root.mkdir(parents=True, exist_ok=True)
