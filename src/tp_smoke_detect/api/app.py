@@ -108,6 +108,17 @@ def create_app(
     app.state.health = HealthRegistry(app.state.metrics)
     app.state.health.set_component("database", HealthState.HEALTHY)
 
+    # YAML camera profiles are authoritative configuration, so make them
+    # available through the same persisted lookup used by audio policy.
+    for profile in app_settings.cameras:
+        if getattr(repo, "get_camera", lambda _camera_id: None)(profile.camera_id) is None:
+            revision = hashlib.sha256(
+                json.dumps(profile.model_dump(mode="json"), sort_keys=True).encode()
+            ).hexdigest()[:16]
+            repo.upsert_camera(
+                {**profile.model_dump(mode="json"), "revision": revision, "active": profile.enabled}
+            )
+
     def get_repository() -> AuditRepository:
         return cast(AuditRepository, app.state.repository)
 
@@ -288,10 +299,6 @@ def create_app(
 
     @app.post("/v1/audio/mute", status_code=201, tags=["policy"])
     def mute(request: AudioMuteCreate, repository: Repo) -> dict[str, object]:
-        if request.scope != "site" and not request.scope_id:
-            raise HTTPException(
-                status_code=422, detail="scope_id is required for zone and camera mutes"
-            )
         return repository.put_mute({"mute_id": str(uuid4()), **request.model_dump(mode="json")})
 
     @app.post("/v1/audio/requests", status_code=201, tags=["policy"])
@@ -300,6 +307,10 @@ def create_app(
         if decision is None:
             raise HTTPException(status_code=404, detail="decision not found")
         camera_id = str(decision["camera_id"])
+        camera = repository.get_camera(camera_id)
+        if camera is None or not camera.get("zone_id"):
+            raise HTTPException(status_code=409, detail="camera profile with zone_id is required")
+        zone_id = str(camera["zone_id"])
         policy_settings = app.state.settings.policy
         quiet_hours = None
         if (
@@ -324,7 +335,9 @@ def create_app(
                 command_ttl_seconds=policy_settings.audio_command_ttl_seconds,
             )
         )
-        now = request.now or datetime.now(UTC)
+        # Time and routing context are server-controlled.  Never accept a
+        # caller timestamp or zone because both can bypass policy limits.
+        now = _utc_now()
         active_mutes = [
             mute
             for mute in repository.list_mutes()
@@ -333,14 +346,13 @@ def create_app(
         ]
         site_muted = any(mute.get("scope") == "site" for mute in active_mutes)
         zone_muted = any(
-            mute.get("scope") == "zone" and mute.get("scope_id") == request.zone_id
-            for mute in active_mutes
+            mute.get("scope") == "zone" and mute.get("scope_id") == zone_id for mute in active_mutes
         )
         camera_muted = any(
             mute.get("scope") == "camera" and mute.get("scope_id") == camera_id
             for mute in active_mutes
         )
-        receipts = repository.list_audio_receipts(zone_id=request.zone_id)
+        receipts = repository.list_audio_receipts(zone_id=zone_id)
         accepted = [
             item for item in receipts if (item.get("playback") or {}).get("status") == "accepted"
         ]
@@ -357,7 +369,7 @@ def create_app(
         result = AudioRequestService(policy, app.state.audio_controller, repository).request(
             decision,
             camera_id=camera_id,
-            zone_id=request.zone_id,
+            zone_id=zone_id,
             now=now,
             announced_at=announced_at,
             hourly_count=hourly_count,

@@ -19,4 +19,8 @@ message TrackCandidate {
   string geometry_json = 12;
   string quality_json = 13;
   string observations_json = 14;
+  string event_id = 15;
+  string correlation_id = 16;
+  string producer = 17;
+  string occurred_at = 18;
 }

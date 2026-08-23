@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..contracts import DecisionCompleted, RunMode
 from ..settings import CameraProfile
@@ -55,11 +55,15 @@ class AudioMuteCreate(APIModel):
     reason: str = Field(min_length=1, max_length=1000)
     actor: str = Field(min_length=1, max_length=128)
 
+    @model_validator(mode="after")
+    def require_scope_id_for_scoped_mute(self) -> AudioMuteCreate:
+        if self.scope != "site" and not self.scope_id:
+            raise ValueError("scope_id is required for zone and camera mutes")
+        return self
+
 
 class AudioRequestCreate(APIModel):
     decision_id: UUID
-    zone_id: str = Field(min_length=1, max_length=128)
-    now: datetime | None = None
 
 
 class CameraUpdate(APIModel):

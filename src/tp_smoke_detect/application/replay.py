@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
+from uuid import NAMESPACE_URL, uuid5
 
 from ..adapters.artifacts.local import (
     ArtifactError,
@@ -286,6 +287,15 @@ class ReplayWorker:
         capture_ts_ns = manifest.capture_start_ts_ns + frame.pts_ns
         occurred = datetime.fromtimestamp(capture_ts_ns / 1_000_000_000, tz=UTC)
         return CandidateEnvelope(
+            event_id=uuid5(
+                NAMESPACE_URL,
+                f"tp-smoke-detect/replay/{manifest.camera_id}/{frame.track_id}/{capture_ts_ns}",
+            ),
+            correlation_id=uuid5(
+                NAMESPACE_URL, f"tp-smoke-detect/replay/{manifest.camera_id}/{frame.track_id}"
+            ),
+            producer="tp-smoke-detect.replay",
+            occurred_at=occurred,
             camera_id=manifest.camera_id,
             track_id=frame.track_id,
             camera_config_revision=manifest.camera_config_revision,

@@ -1,6 +1,54 @@
+import asyncio
+import json
+from typing import Any
 from uuid import uuid4
 
 from tp_smoke_detect.adapters.persistence.sqlite import SQLiteAuditRepository
+from tp_smoke_detect.api.app import create_app
+from tp_smoke_detect.settings import AppSettings, PolicySettings
+
+
+def _asgi_json(app: Any, path: str, payload: dict[str, object]) -> tuple[int, dict[str, Any]]:
+    """Issue a real ASGI request without adding an HTTP client dependency."""
+
+    body = json.dumps(payload).encode()
+    sent: list[dict[str, Any]] = []
+    received = False
+
+    async def receive() -> dict[str, Any]:
+        nonlocal received
+        if received:
+            return {"type": "http.disconnect"}
+        received = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    async def invoke() -> None:
+        await app(
+            {
+                "type": "http",
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "http",
+                "path": path,
+                "raw_path": path.encode(),
+                "query_string": b"",
+                "headers": [(b"host", b"test"), (b"content-type", b"application/json")],
+                "server": ("test", 80),
+                "client": ("test", 1),
+            },
+            receive,
+            send,
+        )
+
+    asyncio.run(invoke())
+    start = next(message for message in sent if message["type"] == "http.response.start")
+    content = b"".join(
+        message.get("body", b"") for message in sent if message["type"] == "http.response.body"
+    )
+    return int(start["status"]), json.loads(content)
 
 
 def _decision(decision_id: str) -> dict[str, object]:
@@ -20,31 +68,54 @@ def _decision(decision_id: str) -> dict[str, object]:
     }
 
 
-def test_decisions_and_reviews_are_append_only() -> None:
+def test_decisions_and_reviews_are_append_only_through_asgi() -> None:
     repository = SQLiteAuditRepository()
     decision_id = str(uuid4())
     repository.put_decision(_decision(decision_id))
-    first = repository.append_review(
-        {
-            "review_id": str(uuid4()),
-            "decision_id": decision_id,
-            "label": "false_positive",
-            "actor": "op",
-        }
+    app = create_app(
+        repository,
+        settings=AppSettings(
+            policy=PolicySettings(audio_muted=True),
+            cameras=[],
+        ),
     )
-    second = repository.append_review(
-        {
-            "review_id": str(uuid4()),
-            "decision_id": decision_id,
-            "label": "true_positive",
-            "actor": "lead",
-        }
+    status, response = _asgi_json(
+        app,
+        f"/v1/events/{decision_id}/reviews",
+        {"label": "false_positive", "actor": "op"},
     )
-    assert first["review_id"] != second["review_id"]
+    assert status == 201
+    assert response["decision_id"] == decision_id
+    status, response = _asgi_json(
+        app,
+        f"/v1/events/{decision_id}/reviews",
+        {"label": "true_positive", "actor": "lead"},
+    )
+    assert status == 201
+    assert response["decision_id"] == decision_id
     saved = repository.get_decision(decision_id)
     assert saved is not None
     assert saved["audio_outcome"] == "would_announce"
     assert len(repository.connection.execute("SELECT * FROM reviews").fetchall()) == 2
+
+
+def test_audio_request_api_uses_persisted_camera_zone_and_policy_eligibility() -> None:
+    repository = SQLiteAuditRepository()
+    decision_id = str(uuid4())
+    repository.put_decision(_decision(decision_id))
+    repository.upsert_camera(
+        {"camera_id": "cam-1", "zone_id": "persisted-zone", "revision": "r1", "active": True}
+    )
+    app = create_app(
+        repository,
+        settings=AppSettings(
+            policy=PolicySettings(audio_muted=True),
+            cameras=[],
+        ),
+    )
+    status, response = _asgi_json(app, "/v1/audio/requests", {"decision_id": decision_id})
+    assert status == 201
+    assert response["reason_code"] == "audio_muted"
 
 
 def test_idempotent_evaluation_lookup_returns_same_record() -> None:

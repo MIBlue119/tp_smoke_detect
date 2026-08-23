@@ -62,7 +62,12 @@ class EvidencePolicy:
         scores: dict[str, float] = {}
         for observation in observations:
             for channel in observation.positive_channels:
-                canonical = _CHANNEL_ALIASES.get(channel, channel)
+                canonical = _CHANNEL_ALIASES.get(channel)
+                if canonical is None:
+                    # Unknown producer names are not independent evidence.
+                    # The allowlist prevents a malformed payload from meeting
+                    # the two-channel safety gate by inventing channels.
+                    continue
                 scores[canonical] = max(scores.get(canonical, 0.0), 1.0)
             if observation.object_label in {"cigarette", "vape", "heated_tobacco"}:
                 scores["object"] = max(scores.get("object", 0.0), observation.object_score)

@@ -118,7 +118,10 @@ def _decision_is_eligible(
     if isinstance(decision, DecisionCompleted):
         return decision.outcome is DecisionOutcome.VERIFIED and decision.audio_eligibility
     outcome = decision.get("outcome")
-    return outcome == DecisionOutcome.VERIFIED or outcome == DecisionOutcome.VERIFIED.value
+    eligible = decision.get("audio_eligibility") is True
+    return eligible and (
+        outcome == DecisionOutcome.VERIFIED or outcome == DecisionOutcome.VERIFIED.value
+    )
 
 
 def _decision_id(decision: DecisionCompleted | CascadeDecision | Mapping[str, Any]) -> UUID:
@@ -175,6 +178,10 @@ class AudioPolicy:
 
         command_id = uuid5(NAMESPACE_URL, f"tp-smoke-detect/audio/{_decision_id(decision)}")
         command = AudioCommand(
+            event_id=uuid4(),
+            correlation_id=_decision_id(decision),
+            producer="tp-smoke-detect.audio-policy",
+            occurred_at=now,
             command_id=command_id,
             decision_id=_decision_id(decision),
             zone_id=context.zone_id,

@@ -10,6 +10,10 @@ from tp_smoke_detect.domain.policy.audio import AudioPolicy, AudioPolicyConfig
 
 def _decision(mode: RunMode = RunMode.AUTOMATIC) -> DecisionCompleted:
     return DecisionCompleted(
+        event_id=uuid4(),
+        correlation_id=uuid4(),
+        producer="test",
+        occurred_at=datetime.now(UTC),
         decision_id=uuid4(),
         camera_id="cam-1",
         track_id="track-1",

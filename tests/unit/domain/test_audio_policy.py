@@ -15,6 +15,10 @@ from tp_smoke_detect.domain.policy.audio import (
 
 def _decision(*, eligible: bool = True) -> DecisionCompleted:
     return DecisionCompleted(
+        event_id=uuid4(),
+        correlation_id=uuid4(),
+        producer="test",
+        occurred_at=datetime.now(UTC),
         decision_id=uuid4(),
         camera_id="cam-1",
         track_id="track-1",
@@ -114,3 +118,14 @@ def test_caps_are_checked_before_command_creation() -> None:
     result = _policy(hourly_audio_cap=0).evaluate(_decision(), _context(now))
     assert result.reason_code is AudioReasonCode.HOURLY_CAP
     assert result.command is None
+
+
+def test_mapping_decision_must_explicitly_opt_in_to_audio() -> None:
+    now = datetime(2026, 8, 24, 1, 0, tzinfo=UTC)
+    decision = {
+        "decision_id": str(uuid4()),
+        "outcome": "verified",
+        "audio_eligibility": False,
+    }
+    result = _policy().evaluate(decision, _context(now))
+    assert result.reason_code is AudioReasonCode.DECISION_INELIGIBLE
