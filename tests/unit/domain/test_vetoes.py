@@ -1,10 +1,10 @@
 from typing import Any
 
 import pytest
+from tp_smoke_detect.domain.models.observations import DomainObservation, OptionalVlmResult
 
 from tp_smoke_detect.contracts import DecisionOutcome
 from tp_smoke_detect.domain.cascade.engine import CascadeEngine
-from tp_smoke_detect.domain.models.observations import DomainObservation, OptionalVlmResult
 
 
 def cycle_observation(timestamp_ms: int, **kwargs: Any) -> DomainObservation:

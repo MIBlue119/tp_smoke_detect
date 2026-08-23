@@ -1,7 +1,8 @@
 from typing import Any
 
-from tp_smoke_detect.domain.cascade.cycle import CycleDetector, CycleDetectorConfig
 from tp_smoke_detect.domain.models.observations import DomainObservation
+
+from tp_smoke_detect.domain.cascade.cycle import CycleDetector, CycleDetectorConfig
 
 
 def observation(timestamp_ms: int, **kwargs: Any) -> DomainObservation:

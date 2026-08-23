@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import FrozenSet, Literal
+from typing import Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,8 +45,8 @@ class DomainObservation:
     smoke_score: float = 0.0
     ember_score: float = 0.0
     persistence_ms: int = 0
-    positive_channels: FrozenSet[str] = field(default_factory=frozenset)
-    vetoes: FrozenSet[str] = field(default_factory=frozenset)
+    positive_channels: frozenset[str] = field(default_factory=frozenset)
+    vetoes: frozenset[str] = field(default_factory=frozenset)
     vlm: OptionalVlmResult | None = None
     model_revisions: tuple[tuple[str, str], ...] = ()
 

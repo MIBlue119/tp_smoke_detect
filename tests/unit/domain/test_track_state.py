@@ -1,7 +1,8 @@
-from tp_smoke_detect.contracts import Stage
-from tp_smoke_detect.domain.cascade.track import TrackState
 from tp_smoke_detect.domain.models.decisions import ReasonCode
 from tp_smoke_detect.domain.models.observations import DomainObservation
+
+from tp_smoke_detect.contracts import Stage
+from tp_smoke_detect.domain.cascade.track import TrackState
 
 
 def test_track_transitions_are_source_timestamp_driven() -> None:

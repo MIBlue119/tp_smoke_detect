@@ -1,5 +1,6 @@
-from tp_smoke_detect.contracts import DecisionOutcome
 from tp_smoke_detect.domain.models.observations import DomainObservation
+
+from tp_smoke_detect.contracts import DecisionOutcome
 from tp_smoke_detect.domain.policy.evidence import EvidencePolicy, EvidencePolicyConfig
 
 
