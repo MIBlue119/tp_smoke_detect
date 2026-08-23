@@ -38,7 +38,6 @@ CREATE TABLE IF NOT EXISTS mode_changes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     payload JSONB NOT NULL
 );
-
 CREATE TABLE IF NOT EXISTS cameras (
     camera_id VARCHAR(128) PRIMARY KEY,
     revision VARCHAR(128) NOT NULL,
@@ -76,4 +75,3 @@ CREATE TABLE IF NOT EXISTS mutes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     payload JSONB NOT NULL
 );
-

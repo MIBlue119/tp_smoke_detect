@@ -42,4 +42,3 @@ contract test. Avoid unresolved local aliases under postponed annotations.
 ## Related commit
 
 Recorded with the API-102 feature commit.
-
