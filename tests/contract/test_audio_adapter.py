@@ -8,6 +8,10 @@ from tp_smoke_detect.ports.audio import PlaybackStatus
 
 def _command(*, message_id: str = "smoke-reminder-neutral-01", expires: int = 30) -> AudioCommand:
     return AudioCommand(
+        event_id=uuid4(),
+        correlation_id=uuid4(),
+        producer="test",
+        occurred_at=datetime.now(UTC),
         command_id=uuid4(),
         decision_id=uuid4(),
         zone_id="zone-a",

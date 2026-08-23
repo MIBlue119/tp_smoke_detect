@@ -294,6 +294,12 @@ class SQLiteAuditRepository:
             for row in self.connection.execute("SELECT payload FROM cameras ORDER BY camera_id")
         ]
 
+    def get_camera(self, camera_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT payload FROM cameras WHERE camera_id = ?", (camera_id,)
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+
     def put_artifact(self, artifact: dict[str, Any]) -> dict[str, Any]:
         item = dict(artifact)
         item.setdefault("created_at", _now())

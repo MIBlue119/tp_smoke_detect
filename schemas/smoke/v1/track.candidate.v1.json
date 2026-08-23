@@ -355,6 +355,16 @@
       "title": "Capture Ts Ns",
       "type": "integer"
     },
+    "correlation_id": {
+      "format": "uuid",
+      "title": "Correlation Id",
+      "type": "string"
+    },
+    "event_id": {
+      "format": "uuid",
+      "title": "Event Id",
+      "type": "string"
+    },
     "first_seen_at": {
       "format": "date-time",
       "title": "First Seen At",
@@ -370,6 +380,17 @@
     },
     "observations": {
       "$ref": "#/$defs/Observations"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "producer": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Producer",
+      "type": "string"
     },
     "quality": {
       "$ref": "#/$defs/Quality"
@@ -401,6 +422,10 @@
     }
   },
   "required": [
+    "event_id",
+    "correlation_id",
+    "producer",
+    "occurred_at",
     "camera_id",
     "track_id",
     "camera_config_revision",

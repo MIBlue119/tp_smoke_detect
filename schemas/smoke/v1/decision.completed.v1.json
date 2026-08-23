@@ -63,9 +63,19 @@
       "title": "Camera Id",
       "type": "string"
     },
+    "correlation_id": {
+      "format": "uuid",
+      "title": "Correlation Id",
+      "type": "string"
+    },
     "decision_id": {
       "format": "uuid",
       "title": "Decision Id",
+      "type": "string"
+    },
+    "event_id": {
+      "format": "uuid",
+      "title": "Event Id",
       "type": "string"
     },
     "evidence_channels": {
@@ -90,6 +100,11 @@
       "title": "Model Revisions",
       "type": "object"
     },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
     "outcome": {
       "$ref": "#/$defs/DecisionOutcome"
     },
@@ -97,6 +112,12 @@
       "maxLength": 128,
       "minLength": 1,
       "title": "Policy Revision",
+      "type": "string"
+    },
+    "producer": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Producer",
       "type": "string"
     },
     "reason_codes": {
@@ -121,6 +142,10 @@
     }
   },
   "required": [
+    "event_id",
+    "correlation_id",
+    "producer",
+    "occurred_at",
     "decision_id",
     "camera_id",
     "track_id",
