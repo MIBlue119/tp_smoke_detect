@@ -9,9 +9,29 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+from contextlib import suppress
 from datetime import UTC, datetime
+from functools import wraps
 from pathlib import Path
 from typing import Any, cast
+
+
+def _synchronized(method: Any) -> Any:
+    """Serialize use of the single SQLite connection across request threads.
+
+    ``check_same_thread=False`` permits a connection to be shared, but does not
+    make SQLite cursors or transactions safe to use concurrently.  A reentrant
+    lock keeps compound reads/writes and their commits indivisible while still
+    allowing repository methods to call one another.
+    """
+
+    @wraps(method)
+    def guarded(self: SQLiteAuditRepository, *args: Any, **kwargs: Any) -> Any:
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return guarded
 
 
 def _now() -> str:
@@ -35,6 +55,7 @@ class SQLiteAuditRepository:
 
     def __init__(self, database: str | Path = ":memory:") -> None:
         self.database = str(database)
+        self._lock = threading.RLock()
         self.connection = sqlite3.connect(self.database, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys = ON")
@@ -111,6 +132,7 @@ class SQLiteAuditRepository:
                 ON retention_audits(artifact_id, created_at);
             CREATE TABLE IF NOT EXISTS evaluations (
                 evaluation_id TEXT PRIMARY KEY,
+                decision_id TEXT REFERENCES decisions(decision_id) ON DELETE CASCADE,
                 status TEXT NOT NULL,
                 idempotency_key TEXT UNIQUE,
                 result TEXT,
@@ -130,6 +152,8 @@ class SQLiteAuditRepository:
             );
             CREATE TABLE IF NOT EXISTS audio_receipts (
                 receipt_id TEXT PRIMARY KEY,
+                -- The CPU adapter accepts standalone playback probes; cleanup
+                -- removes linked rows explicitly in the metadata transaction.
                 decision_id TEXT NOT NULL,
                 camera_id TEXT NOT NULL,
                 zone_id TEXT NOT NULL,
@@ -140,6 +164,21 @@ class SQLiteAuditRepository:
                 created_at TEXT NOT NULL,
                 payload TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS audio_receipt_attempts (
+                attempt_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                receipt_id TEXT NOT NULL REFERENCES audio_receipts(receipt_id) ON DELETE CASCADE,
+                attempt_no INTEGER NOT NULL,
+                decision_id TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                reason_code TEXT NOT NULL,
+                command_id TEXT,
+                playback TEXT,
+                created_at TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                UNIQUE(receipt_id, attempt_no)
+            );
+            CREATE INDEX IF NOT EXISTS idx_audio_attempts_receipt
+                ON audio_receipt_attempts(receipt_id, attempt_no);
             CREATE INDEX IF NOT EXISTS idx_audio_receipts_zone_created
                 ON audio_receipts(zone_id, created_at);
             CREATE TABLE IF NOT EXISTS model_releases (
@@ -149,8 +188,14 @@ class SQLiteAuditRepository:
             );
             """
         )
+        # Databases created by the first release need the new nullable column;
+        # linked rows are still removed explicitly below for those databases,
+        # where SQLite cannot alter an existing foreign-key constraint in place.
+        with suppress(sqlite3.OperationalError):
+            self.connection.execute("ALTER TABLE evaluations ADD COLUMN decision_id TEXT")
         self.connection.commit()
 
+    @_synchronized
     def health(self) -> bool:
         try:
             self.connection.execute("SELECT 1").fetchone()
@@ -158,9 +203,11 @@ class SQLiteAuditRepository:
         except sqlite3.Error:
             return False
 
+    @_synchronized
     def close(self) -> None:
         self.connection.close()
 
+    @_synchronized
     def put_decision(self, decision: dict[str, Any]) -> dict[str, Any]:
         item = dict(decision)
         item.setdefault("created_at", _now())
@@ -190,12 +237,14 @@ class SQLiteAuditRepository:
         self.connection.commit()
         return item
 
+    @_synchronized
     def get_decision(self, decision_id: str) -> dict[str, Any] | None:
         row = self.connection.execute(
             "SELECT * FROM decisions WHERE decision_id = ?", (decision_id,)
         ).fetchone()
         return _decode(row) if row else None
 
+    @_synchronized
     def list_decisions(
         self,
         *,
@@ -231,6 +280,7 @@ class SQLiteAuditRepository:
         ).fetchall()
         return [_decode(row) for row in rows]
 
+    @_synchronized
     def append_review(self, review: dict[str, Any]) -> dict[str, Any]:
         item = dict(review)
         item.setdefault("created_at", _now())
@@ -251,6 +301,7 @@ class SQLiteAuditRepository:
         self.connection.commit()
         return item
 
+    @_synchronized
     def append_mode_change(self, change: dict[str, Any]) -> dict[str, Any]:
         item = dict(change)
         item.setdefault("created_at", _now())
@@ -270,12 +321,14 @@ class SQLiteAuditRepository:
         self.connection.commit()
         return item
 
+    @_synchronized
     def current_mode(self) -> dict[str, Any] | None:
         row = self.connection.execute(
             "SELECT payload FROM mode_changes ORDER BY created_at DESC LIMIT 1"
         ).fetchone()
         return dict(json.loads(row[0])) if row else None
 
+    @_synchronized
     def upsert_camera(self, camera: dict[str, Any]) -> dict[str, Any]:
         item = dict(camera)
         item.setdefault("updated_at", _now())
@@ -288,12 +341,14 @@ class SQLiteAuditRepository:
         self.connection.commit()
         return item
 
+    @_synchronized
     def list_cameras(self) -> list[dict[str, Any]]:
         return [
             json.loads(row[0])
             for row in self.connection.execute("SELECT payload FROM cameras ORDER BY camera_id")
         ]
 
+    @_synchronized
     def put_artifact(self, artifact: dict[str, Any]) -> dict[str, Any]:
         item = dict(artifact)
         item.setdefault("created_at", _now())
@@ -325,6 +380,7 @@ class SQLiteAuditRepository:
         # by setting media_class in the payload.
         return "event_clip" if str(item.get("media_type", "")).startswith("video/") else "raw_media"
 
+    @_synchronized
     def list_retention_candidates(
         self, *, cutoffs: dict[str, datetime], now: datetime
     ) -> list[dict[str, Any]]:
@@ -356,6 +412,7 @@ class SQLiteAuditRepository:
                 candidates.append(item)
         return candidates
 
+    @_synchronized
     def finalize_artifact_deletion(
         self, artifact_id: str, *, media_class: str, deleted_at: datetime
     ) -> bool:
@@ -382,6 +439,7 @@ class SQLiteAuditRepository:
             )
         return changed
 
+    @_synchronized
     def append_retention_audit(self, audit: dict[str, Any]) -> dict[str, Any]:
         item = dict(audit)
         item.setdefault("action", "delete")
@@ -407,6 +465,7 @@ class SQLiteAuditRepository:
         item["created_at"] = timestamp
         return item
 
+    @_synchronized
     def list_retention_audits(self, artifact_id: str | None = None) -> list[dict[str, Any]]:
         if artifact_id:
             rows = self.connection.execute(
@@ -419,6 +478,7 @@ class SQLiteAuditRepository:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    @_synchronized
     def delete_expired_metadata(self, *, cutoff: datetime, now: datetime) -> int:
         """Delete old decision metadata after media retention has run.
 
@@ -437,39 +497,81 @@ class SQLiteAuditRepository:
             if not rows:
                 return 0
             decision_ids = [str(row[0]) for row in rows]
-            self.connection.executemany(
-                "DELETE FROM reviews WHERE decision_id = ?", ((value,) for value in decision_ids)
+            placeholders = ",".join("?" for _ in decision_ids)
+            # Evaluation results and audio receipts can each contain a copy of
+            # the decision.  Remove every linked row in this same transaction,
+            # including attempt history, before deleting the parent decision.
+            self.connection.execute(
+                f"DELETE FROM reviews WHERE decision_id IN ({placeholders})", decision_ids
+            )
+            self.connection.execute(
+                f"DELETE FROM audio_receipt_attempts WHERE receipt_id IN "
+                f"(SELECT receipt_id FROM audio_receipts WHERE decision_id IN ({placeholders}))",
+                decision_ids,
+            )
+            self.connection.execute(
+                f"DELETE FROM audio_receipts WHERE decision_id IN ({placeholders})", decision_ids
+            )
+            self.connection.execute(
+                f"DELETE FROM evaluations WHERE decision_id IN ({placeholders}) "
+                f"OR EXISTS (SELECT 1 FROM json_tree(evaluations.result) "
+                f"WHERE json_tree.key = 'decision_id' AND json_tree.value IN ({placeholders}))",
+                [*decision_ids, *decision_ids],
             )
             self.connection.execute("DELETE FROM decisions WHERE created_at < ?", (threshold,))
         return len(decision_ids)
 
+    @_synchronized
     def get_artifact(self, artifact_id: str) -> dict[str, Any] | None:
         row = self.connection.execute(
             "SELECT payload FROM artifacts WHERE artifact_id=?", (artifact_id,)
         ).fetchone()
         return json.loads(row[0]) if row else None
 
+    @_synchronized
     def put_evaluation(self, evaluation: dict[str, Any]) -> dict[str, Any]:
         item = dict(evaluation)
         item.setdefault("created_at", _now())
         item.setdefault("updated_at", item["created_at"])
-        self.connection.execute(
-            """INSERT INTO evaluations
-            (evaluation_id,status,idempotency_key,result,payload,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?)""",
-            (
-                item["evaluation_id"],
-                item["status"],
-                item.get("idempotency_key"),
-                _json(item["result"]) if item.get("result") is not None else None,
-                _json(item),
-                item["created_at"],
-                item["updated_at"],
-            ),
-        )
-        self.connection.commit()
-        return item
+        result = item.get("result")
+        decision_id = item.get("decision_id")
+        if decision_id is None and isinstance(result, dict):
+            nested = result.get("decision")
+            if isinstance(nested, dict):
+                decision_id = nested.get("decision_id")
+        item["decision_id"] = str(decision_id) if decision_id is not None else None
+        with self.connection:
+            # The unique idempotency key is claimed in the same write as the
+            # evaluation.  A concurrent retry therefore returns the original
+            # record instead of raising or creating a second evaluation.
+            self.connection.execute(
+                """INSERT INTO evaluations
+                (evaluation_id,decision_id,status,idempotency_key,result,payload,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(idempotency_key) DO NOTHING""",
+                (
+                    item["evaluation_id"],
+                    item["decision_id"],
+                    item["status"],
+                    item.get("idempotency_key"),
+                    _json(result) if result is not None else None,
+                    _json(item),
+                    item["created_at"],
+                    item["updated_at"],
+                ),
+            )
+            row = self.connection.execute(
+                "SELECT evaluation_id FROM evaluations WHERE evaluation_id=? "
+                "OR (idempotency_key IS NOT NULL AND idempotency_key=?)",
+                (item["evaluation_id"], item.get("idempotency_key")),
+            ).fetchone()
+        if row is not None and str(row[0]) != str(item["evaluation_id"]):
+            existing = self.get_evaluation(str(row[0]))
+            if existing is not None:
+                return cast(dict[str, Any], existing)
+        return self.get_evaluation(str(item["evaluation_id"])) or item
 
+    @_synchronized
     def get_evaluation(self, evaluation_id: str) -> dict[str, Any] | None:
         row = self.connection.execute(
             "SELECT * FROM evaluations WHERE evaluation_id=?", (evaluation_id,)
@@ -487,12 +589,14 @@ class SQLiteAuditRepository:
         )
         return payload
 
+    @_synchronized
     def get_evaluation_by_idempotency(self, key: str) -> dict[str, Any] | None:
         row = self.connection.execute(
             "SELECT evaluation_id FROM evaluations WHERE idempotency_key=?", (key,)
         ).fetchone()
         return self.get_evaluation(row[0]) if row else None
 
+    @_synchronized
     def put_mute(self, mute: dict[str, Any]) -> dict[str, Any]:
         item = dict(mute)
         item.setdefault("created_at", _now())
@@ -514,23 +618,30 @@ class SQLiteAuditRepository:
         self.connection.commit()
         return item
 
+    @_synchronized
     def list_mutes(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             "SELECT payload FROM mutes ORDER BY created_at DESC"
         ).fetchall()
         return [json.loads(row[0]) for row in rows]
 
+    @_synchronized
     def put_audio_receipt(self, receipt: dict[str, Any]) -> dict[str, Any]:
-        """Insert once; a decision's audio outcome is immutable."""
+        """Persist the latest outcome and append a durable attempt history."""
 
         item = dict(receipt)
         item.setdefault("created_at", _now())
-        self.connection.execute(
-            """INSERT OR IGNORE INTO audio_receipts
-            (receipt_id,decision_id,camera_id,zone_id,outcome,reason_code,command_id,
-             playback,created_at,payload) VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (
-                item["receipt_id"],
+        with self.connection:
+            existing = self.connection.execute(
+                "SELECT COALESCE(MAX(attempt_no), 0) FROM audio_receipt_attempts "
+                "WHERE receipt_id=?",
+                (item["receipt_id"],),
+            ).fetchone()
+            attempt_no = int(existing[0]) + 1 if existing else 1
+            current = self.connection.execute(
+                "SELECT 1 FROM audio_receipts WHERE receipt_id=?", (item["receipt_id"],)
+            ).fetchone()
+            values = (
                 item["decision_id"],
                 item["camera_id"],
                 item["zone_id"],
@@ -540,17 +651,47 @@ class SQLiteAuditRepository:
                 _json(item.get("playback")) if item.get("playback") is not None else None,
                 item["created_at"],
                 _json(item),
-            ),
-        )
-        self.connection.commit()
+            )
+            if current is None:
+                self.connection.execute(
+                    """INSERT INTO audio_receipts
+                    (receipt_id,decision_id,camera_id,zone_id,outcome,reason_code,command_id,
+                     playback,created_at,payload) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (item["receipt_id"], *values),
+                )
+            else:
+                self.connection.execute(
+                    """UPDATE audio_receipts SET decision_id=?, camera_id=?, zone_id=?,
+                    outcome=?, reason_code=?, command_id=?, playback=?, created_at=?, payload=?
+                    WHERE receipt_id=?""",
+                    (*values, item["receipt_id"]),
+                )
+            self.connection.execute(
+                """INSERT INTO audio_receipt_attempts
+                (receipt_id,attempt_no,decision_id,outcome,reason_code,command_id,playback,
+                 created_at,payload) VALUES (?,?,?,?,?,?,?,?,?)""",
+                (
+                    item["receipt_id"],
+                    attempt_no,
+                    item["decision_id"],
+                    item["outcome"],
+                    item["reason_code"],
+                    item.get("command_id"),
+                    _json(item.get("playback")) if item.get("playback") is not None else None,
+                    item["created_at"],
+                    _json(item),
+                ),
+            )
         return self.get_audio_receipt(str(item["receipt_id"])) or item
 
+    @_synchronized
     def get_audio_receipt(self, receipt_id: str) -> dict[str, Any] | None:
         row = self.connection.execute(
             "SELECT payload FROM audio_receipts WHERE receipt_id=?", (receipt_id,)
         ).fetchone()
         return json.loads(row[0]) if row else None
 
+    @_synchronized
     def list_audio_receipts(
         self, *, camera_id: str | None = None, zone_id: str | None = None
     ) -> list[dict[str, Any]]:
@@ -568,6 +709,7 @@ class SQLiteAuditRepository:
         ).fetchall()
         return [json.loads(row[0]) for row in rows]
 
+    @_synchronized
     def false_announcement_count(self, camera_id: str) -> int:
         row = self.connection.execute(
             """SELECT COUNT(*) FROM reviews r JOIN decisions d ON d.decision_id=r.decision_id
@@ -576,6 +718,7 @@ class SQLiteAuditRepository:
         ).fetchone()
         return int(row[0]) if row else 0
 
+    @_synchronized
     def list_models(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             "SELECT payload FROM model_releases ORDER BY created_at DESC"
