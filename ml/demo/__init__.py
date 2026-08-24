@@ -14,6 +14,16 @@ from .contracts import (
     SourceReceipt,
     validate_video_annotation,
 )
+from .fusion import (
+    CigaretteDetection,
+    DeterministicFusion,
+    DeterministicPersonTracker,
+    FrameDetections,
+    FusionConfig,
+    FusionResult,
+    PersonDetection,
+    baseline_miss_event,
+)
 
 __all__ = [
     "DEMO_SCHEMA_VERSION",
@@ -23,4 +33,12 @@ __all__ = [
     "ModelReceipt",
     "SourceReceipt",
     "validate_video_annotation",
+    "CigaretteDetection",
+    "DeterministicFusion",
+    "DeterministicPersonTracker",
+    "FrameDetections",
+    "FusionConfig",
+    "FusionResult",
+    "PersonDetection",
+    "baseline_miss_event",
 ]
