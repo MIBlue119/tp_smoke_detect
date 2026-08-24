@@ -1,0 +1,64 @@
+{
+  "schema_version": "demo.run-manifest.v1",
+  "run_id": "shibuya-GByZa0qbA8A-r1",
+  "status": "completed",
+  "source_artifact_id": "source/shibuya-GByZa0qbA8A.mp4",
+  "source_sha256": "32d3ffd7456d0a2f11e3b62a0330328e0541b7bb8e98ce733da5b3c1523facc5",
+  "annotation_artifact_id": "annotation.json",
+  "annotation_sha256": "68742d8a426431c6b8838cf4072284439c6198bcafb48825118ebe5a8ff99416",
+  "output_artifact_id": "annotated.mp4",
+  "output_sha256": "c28d3640cdc128c21c523419f9e586cba9b15be840a9e3f27654154698a04dd1",
+  "output_bytes": 16222433,
+  "frames_processed": 1248,
+  "source_duration_seconds": 41.6416,
+  "fps": 29.97002997002997,
+  "elapsed_seconds": 27.670814724639058,
+  "throughput_fps": 45.10167165004857,
+  "runtime": {
+    "runtime_id": "torch-2.13.0+cu130-tesla",
+    "framework": "pytorch",
+    "framework_version": "2.13.0+cu130",
+    "cuda_version": "13.0",
+    "device_name": "NVIDIA GeForce RTX 3090",
+    "compute_capability": "8.6",
+    "device_index": 0,
+    "fake_provider": false
+  },
+  "adapter_receipts": [
+    {
+      "role": "person_pose",
+      "model_revision": "ultralytics-assets-release-v8.3.0/yolo11n-pose.pt",
+      "artifact_sha256": "869e83fcdffdc7371fa4e34cd8e51c838cc729571d1635e5141e3075e9319dc0",
+      "device": "cuda:0",
+      "frames": 1248,
+      "elapsed_ms": 14038.81192393601,
+      "peak_vram_bytes": 145785856,
+      "fake_provider": false
+    },
+    {
+      "role": "cigarette_detector",
+      "model_revision": "12a54cda2ca031e2b96a486bc288e957e56f51c8",
+      "artifact_sha256": "0ef558d3cf049d0acbb3f2322bc9e4e53db1a107426e3669622176c30c054d82",
+      "device": "cuda:0",
+      "frames": 1248,
+      "elapsed_ms": 11580.602506175637,
+      "peak_vram_bytes": 211421184,
+      "fake_provider": false
+    }
+  ],
+  "export_backends": {
+    "onnx": "not_attempted_in_u5",
+    "tensorrt": "not_attempted_in_u5"
+  },
+  "event_count": 0,
+  "event_states": [],
+  "manual_review_count": 21,
+  "audio_enabled": false,
+  "production_decision_created": false,
+  "config_sha256": "55cd5795e00f4597ef73e44c78ef41ba9c38869880e22d362b9b2c7a0a1abb15",
+  "notes": [
+    "Baseline demo only; not production qualified.",
+    "Fixed two-second samples were visually spot-checked; no sampled frame was confidently labelled true_candidate or visible_miss.",
+    "No production decision, audio request, identity inference, or remote inference was created."
+  ]
+}

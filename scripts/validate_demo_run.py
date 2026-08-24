@@ -71,11 +71,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.source:
         if not all((args.annotation, args.output, args.media_receipt)):
             parser.error("--source requires --annotation, --output, and --media-receipt")
-        receipt = validate_media(
+        media_receipt = validate_media(
             args.source, args.annotation, args.output, max_bytes=args.max_bytes
         )
-        write_receipt(args.media_receipt, receipt)
-        print(json.dumps(receipt.to_dict(), sort_keys=True))
+        write_receipt(args.media_receipt, media_receipt)
+        print(json.dumps(media_receipt.to_dict(), sort_keys=True))
     return 0
 
 
