@@ -57,4 +57,4 @@ JSON or structured logs, never in Prometheus labels.
 
 ## Related commit
 
-`TBD until the canonical GPU-108 feature commit is created.`
+`dacc652d543e07c2cea0694b71367cbad888b991` — `feat(observability): add bounded gpu degraded telemetry`
