@@ -37,6 +37,9 @@ gpu = [
 ml = [
   "mlflow>=2.18,<3",
 ]
+demo = [
+  "yt-dlp==2026.8.19",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tp_smoke_detect"]

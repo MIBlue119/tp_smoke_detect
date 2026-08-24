@@ -1,0 +1,57 @@
+{
+  "schema_version": "demo.config.v1",
+  "config_revision": "shibuya-baseline-r1",
+  "source": {
+    "video_id": "GByZa0qbA8A",
+    "canonical_url": "https://www.youtube.com/watch?v=GByZa0qbA8A",
+    "requested_format": "135",
+    "private_evaluation_only": true
+  },
+  "models": {
+    "pose": {
+      "role": "person_pose",
+      "source_url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n-pose.pt",
+      "revision": "ultralytics-assets-release-v8.3.0/yolo11n-pose.pt",
+      "sha256": "869e83fcdffdc7371fa4e34cd8e51c838cc729571d1635e5141e3075e9319dc0",
+      "size_bytes": 6255593,
+      "license": "AGPL-3.0-or-later-or-Enterprise",
+      "license_url": "https://www.ultralytics.com/license",
+      "parent_checkpoint": "Ultralytics YOLO11n-pose official release asset",
+      "format": "pickle",
+      "load_policy": "never load in acquisition; disposable unprivileged conversion only"
+    },
+    "cigarette": {
+      "role": "cigarette_detector",
+      "source_url": "https://huggingface.co/HEIher/smoking-detection/resolve/12a54cda2ca031e2b96a486bc288e957e56f51c8/best.pt",
+      "revision": "12a54cda2ca031e2b96a486bc288e957e56f51c8",
+      "sha256": "0ef558d3cf049d0acbb3f2322bc9e4e53db1a107426e3669622176c30c054d82",
+      "size_bytes": 40509349,
+      "license": "MIT (model card); parent YOLO11 terms apply",
+      "license_url": "https://huggingface.co/HEIher/smoking-detection",
+      "parent_checkpoint": "Ultralytics YOLO11m single-class cigarette detector",
+      "dataset_ancestry": "Roboflow ancestry disclosed by model card; dataset redistribution terms not independently verified",
+      "format": "pickle",
+      "load_policy": "never load in acquisition; disposable unprivileged conversion only"
+    }
+  },
+  "fusion": {
+    "entry_confidence": 0.55,
+    "exit_confidence": 0.35,
+    "persistence_frames": 4,
+    "exit_gap_frames": 6,
+    "association_zone": "expanded_head_or_wrist_to_mouth",
+    "states": ["candidate", "insufficient_evidence", "unclear", "baseline_miss"]
+  },
+  "runtime": {
+    "device": "cuda:0",
+    "required_compute_capability": "8.6",
+    "fake_provider_allowed": false,
+    "audio_enabled": false,
+    "production_decision_created": false
+  },
+  "delivery": {
+    "max_bytes": 50000000,
+    "require_no_audio": true,
+    "banner": "BASELINE DEMO - NOT PRODUCTION QUALIFIED"
+  }
+}

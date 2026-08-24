@@ -19,3 +19,6 @@ native/deepstream/build-gpu102-*/
 /models/
 data/private/
 artifacts/private/
+local_artifacts/model-demo/
+.local-demo-inputs/
+.local-demo-tools/

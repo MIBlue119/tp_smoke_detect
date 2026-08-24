@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tp-smoke-detect.invalid/schemas/demo/video-annotation.v1.json",
+  "title": "Private Shibuya baseline video annotation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "source", "models", "runtime", "config_revision", "config_sha256", "frames", "events", "manual_review", "audio_enabled", "production_decision_created"],
+  "properties": {
+    "schema_version": {"const": "demo.video-annotation.v1"},
+    "run_id": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9._-]+$"},
+    "config_revision": {"type": "string", "minLength": 1},
+    "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "audio_enabled": {"const": false},
+    "production_decision_created": {"const": false},
+    "source": {"$ref": "#/$defs/source"},
+    "models": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/model"}},
+    "runtime": {"$ref": "#/$defs/runtime"},
+    "frames": {"type": "array", "items": {"$ref": "#/$defs/frame"}},
+    "events": {"type": "array", "items": {"$ref": "#/$defs/event"}},
+    "manual_review": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["judgment"], "properties": {"event_id": {"type": "string"}, "frame_index": {"type": "integer", "minimum": 0}, "judgment": {"enum": ["true_candidate", "false_candidate", "visible_miss", "unclear"]}, "reason": {"type": "string"}}}}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source": {"type": "object", "additionalProperties": false, "required": ["video_id", "canonical_url", "title", "uploader", "duration_seconds", "width", "height", "frame_rate", "video_codec", "audio_streams", "byte_size", "sha256", "acquisition_tool", "acquisition_tool_version", "source_revision", "rights_disposition", "license_note", "local_artifact_id"], "properties": {"video_id": {"type": "string"}, "canonical_url": {"type": "string", "format": "uri", "pattern": "^https://"}, "title": {"type": "string"}, "uploader": {"type": "string"}, "duration_seconds": {"type": "number", "exclusiveMinimum": 0}, "width": {"type": "integer", "minimum": 1}, "height": {"type": "integer", "minimum": 1}, "frame_rate": {"type": "string"}, "video_codec": {"type": "string"}, "audio_streams": {"const": 0}, "byte_size": {"type": "integer", "minimum": 1}, "sha256": {"$ref": "#/$defs/hash"}, "acquisition_tool": {"type": "string"}, "acquisition_tool_version": {"type": "string"}, "source_revision": {"type": "string"}, "rights_disposition": {"enum": ["private_user_directed_evaluation_only", "approved_reusable"]}, "license_note": {"type": "string", "minLength": 1}, "local_artifact_id": {"type": "string", "pattern": "^[^/].*"}}},
+    "model": {"type": "object", "additionalProperties": false, "required": ["role", "artifact_id", "model_revision", "source_url", "model_card_license", "parent_license", "parent_license_url", "dataset_ancestry", "rights_disposition", "local_artifact_id", "artifact_size_bytes", "artifact_sha256", "format", "pickle_load_policy"], "properties": {"role": {"type": "string"}, "artifact_id": {"type": "string"}, "model_revision": {"type": "string"}, "source_url": {"type": "string", "format": "uri", "pattern": "^https://"}, "model_card_license": {"type": "string"}, "parent_license": {"type": "string"}, "parent_license_url": {"type": "string", "format": "uri", "pattern": "^https://"}, "dataset_ancestry": {"type": "string"}, "rights_disposition": {"enum": ["private_user_directed_evaluation_only", "approved_reusable"]}, "local_artifact_id": {"type": "string", "pattern": "^[^/].*"}, "artifact_size_bytes": {"type": "integer", "minimum": 1}, "artifact_sha256": {"$ref": "#/$defs/hash"}, "format": {"type": "string"}, "pickle_load_policy": {"type": "string"}}},
+    "runtime": {"type": "object", "additionalProperties": false, "required": ["runtime_id", "framework", "framework_version", "cuda_version", "device_name", "compute_capability", "device_index", "fake_provider"], "properties": {"runtime_id": {"type": "string"}, "framework": {"type": "string"}, "framework_version": {"type": "string"}, "cuda_version": {"type": "string"}, "device_name": {"type": "string"}, "compute_capability": {"type": "string"}, "device_index": {"type": "integer", "minimum": 0}, "fake_provider": {"const": false}}},
+    "frame": {"type": "object", "additionalProperties": false, "required": ["frame_index", "source_pts_ns", "track_id", "person_box", "pose_keypoints", "cigarette_box", "person_confidence", "cigarette_confidence", "association_score", "state", "reason_codes"], "properties": {"frame_index": {"type": "integer", "minimum": 0}, "source_pts_ns": {"type": "integer", "minimum": 0}, "track_id": {"type": ["string", "null"]}, "person_box": {"type": ["array", "null"], "minItems": 4, "maxItems": 4, "items": {"type": "number", "minimum": 0, "maximum": 1}}, "pose_keypoints": {"type": "array", "items": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number", "minimum": 0, "maximum": 1}}}, "cigarette_box": {"type": ["array", "null"], "minItems": 4, "maxItems": 4, "items": {"type": "number", "minimum": 0, "maximum": 1}}, "person_confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1}, "cigarette_confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1}, "association_score": {"type": ["number", "null"], "minimum": 0, "maximum": 1}, "state": {"enum": ["candidate", "insufficient_evidence", "unclear", "baseline_miss"]}, "reason_codes": {"type": "array", "items": {"type": "string"}}}},
+    "event": {"type": "object", "additionalProperties": false, "required": ["event_id", "track_id", "start_pts_ns", "end_pts_ns", "state", "reason_codes"], "properties": {"event_id": {"type": "string"}, "track_id": {"type": "string"}, "start_pts_ns": {"type": "integer", "minimum": 0}, "end_pts_ns": {"type": "integer", "minimum": 0}, "state": {"enum": ["candidate", "insufficient_evidence", "unclear", "baseline_miss"]}, "reason_codes": {"type": "array", "items": {"type": "string"}}}}
+  }
+}
