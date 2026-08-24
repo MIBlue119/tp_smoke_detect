@@ -1,0 +1,328 @@
+{
+  "claim_boundary": "RTX 3090 lab only; never production 24-hour qualification",
+  "commands": [
+    {
+      "argv": [
+        "nvidia-smi",
+        "--query-gpu=name,compute_cap,driver_version,memory.total",
+        "--format=csv,noheader,nounits"
+      ],
+      "duration_seconds": 0.018,
+      "returncode": 0,
+      "status": "passed",
+      "stderr_tail": "",
+      "stdout_tail": "NVIDIA GeForce RTX 3090, 8.6, 580.126.09, 24576\n"
+    },
+    {
+      "argv": [
+        "docker",
+        "info",
+        "--format",
+        "server={{.ServerVersion}} default={{.DefaultRuntime}}"
+      ],
+      "duration_seconds": 0.031,
+      "returncode": 0,
+      "status": "passed",
+      "stderr_tail": "",
+      "stdout_tail": "server=28.3.3 default=runc\n"
+    },
+    {
+      "argv": [
+        "docker",
+        "info",
+        "--format",
+        "{{range $name, $_ := .Runtimes}}{{$name}} {{end}}"
+      ],
+      "duration_seconds": 0.031,
+      "returncode": 0,
+      "status": "passed",
+      "stderr_tail": "",
+      "stdout_tail": "io.containerd.runc.v2 nvidia runc \n"
+    },
+    {
+      "argv": [
+        "docker",
+        "pull",
+        "nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759"
+      ],
+      "duration_seconds": 30.006,
+      "returncode": null,
+      "status": "timeout",
+      "stderr_tail": "",
+      "stdout_tail": "nvcr.io/nvidia/deepstream@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759: Pulling from nvidia/deepstream\n707e32e9fc56: Pulling fs layer\nc15d1d6b2c11: Pulling fs layer\n7e97a8ec5681: Pulling fs layer\n894330fe1bf5: Pulling fs layer\n97707dfd1d40: Pulling fs layer\nd69ae92c3e1e: Pulling fs layer\na013d53fd443: Pulling fs layer\n18989d23e6f7: Pulling fs layer\n53638f96ad3c: Pulling fs layer\nedbefd2705db: Pulling fs layer\n4a10dab4bd4c: Pulling fs layer\n7ee32cc2089f: Pulling fs layer\n91eeea9164ed: Pulling fs layer\n8a97013af2f7: Pulling fs layer\ne7e3bed3cba2: Pulling fs layer\n28c7c853143d: Pulling fs layer\nb2b861b09905: Pulling fs layer\n1d6a93c741ac: Pulling fs layer\na013d53fd443: Waiting\nf805b9a60db2: Pulling fs layer\n18989d23e6f7: Waiting\n8f5df47fd444: Pulling fs layer\n53638f96ad3c: Waiting\n4a10dab4bd4c: Waiting\n0874059c255d: Pulling fs layer\n421eb8390334: Pulling fs layer\nedbefd2705db: Waiting\n7ee32cc2089f: Waiting\nb17fdbdb8751: Pulling fs layer\n91eeea9164ed: Waiting\ne7e3bed3cba2: Waiting\n8a97013af2f7: Waiting\n28c7c853143d: Waiting\nb906598a866a: Pulling fs layer\nb2b861b09905: Waiting\n1d6a93c741ac: Waiting\n61e89b5f801f: Pulling fs layer\nde8d67c8cb10: Pulling fs layer\nf805b9a60db2: Waiting\n97707dfd1d40: Waiting\n0e70ad721d2d: Pulling fs layer\n8f5df47fd444: Waiting\n6fdfb0a8926c: Pulling fs layer\n894330fe1bf5: Waiting\nb906598a866a: Waiting\n0874059c255d: Waiting\nf97772029369: Pulling fs layer\n61e89b5f801f: Waiting\n7f985f091771: Pulling fs layer\nb17fdbdb8751: Waiting\nf5c421d88502: Pulling fs layer\n6fdfb0a8926c: Waiting\nde8d67c8cb10: Waiting\n0e70ad721d2d: Waiting\n7f985f091771: Waiting\nf97772029369: Waiting\naa6a8a12baea: Pulling fs layer\n41def9356f0f: Pulling fs layer\nf5c421d88502: Waiting\nd56d6dcef3e6: Pulling fs layer\n1ed004c21be8: Pulling fs layer\naa6a8a12baea: Waiting\nd56d6dcef3e6: Waiting\n2d68fba7bd67: Pulling fs layer\n41def9356f0f: Waiting\ne255e657d296: Pulling fs layer\n1378e4de9e38: Pulling fs layer\n2d68fba7bd67: Waiting\n5ae0ec8ca676: Pulling fs layer\ne255e657d296: Waiting\n1378e4de9e38: Waiting\nffe713aeb75f: Pulling fs layer\n5ae0ec8ca676: Waiting\nfcd74f2f599b: Pulling fs layer\nffe713aeb75f: Waiting\n51d62298f456: Pulling fs layer\nfcd74f2f599b: Waiting\ne1a16d35e1c1: Pulling fs layer\n7d84f4b98c32: Pulling fs layer\nfcfb425631fb: Pulling fs layer\n237fe91f3a5d: Pulling fs layer\n51d62298f456: Waiting\n7d84f4b98c32: Waiting\ne1a16d35e1c1: Waiting\nfcfb425631fb: Waiting\n1cf4294f0699: Pulling fs layer\n1cf4294f0699: Waiting\n7e97a8ec5681: Verifying Checksum\n7e97a8ec5681: Download complete\n894330fe1bf5: Download complete\n707e32e9fc56: Verifying Checksum\n707e32e9fc56: Download complete\nd69ae92c3e1e: Download complete\n707e32e9fc56: Pull complete\na013d53fd443: Verifying Checksum\na013d53fd443: Download complete\n18989d23e6f7: Verifying Checksum\n18989d23e6f7: Download complete\n53638f96ad3c: Download complete\nedbefd2705db: Verifying Checksum\nedbefd2705db: Download complete\n4a10dab4bd4c: Verifying Checksum\n4a10dab4bd4c: Download complete\n7ee32cc2089f: Verifying Checksum\n7ee32cc2089f: Download complete\nc15d1d6b2c11: Verifying Checksum\nc15d1d6b2c11: Download complete\n8a97013af2f7: Verifying Checksum\n8a97013af2f7: Download complete\nc15d1d6b2c11: Pull complete\n91eeea9164ed: Verifying Checksum\n91eeea9164ed: Download complete\ne7e3bed3cba2: Verifying Checksum\ne7e3bed3cba2: Download complete\nb2b861b09905: Download complete\n7e97a8ec5681: Pull complete\n894330fe1bf5: Pull complete\n1d6a93c741ac: Verifying Checksum\n1d6a93c741ac: Download complete\nf805b9a60db2: Download complete\n8f5df47fd444: Download complete\n"
+    },
+    {
+      "argv": [
+        "docker",
+        "image",
+        "inspect",
+        "nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759",
+        "--format",
+        "{{json .RepoDigests}}"
+      ],
+      "duration_seconds": 0.013,
+      "returncode": 1,
+      "status": "failed",
+      "stderr_tail": "Error response from daemon: No such image: nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759\n",
+      "stdout_tail": "\n"
+    }
+  ],
+  "errors": [
+    "exact image pull did not complete: timeout",
+    "exact digest-pinned image is not imported",
+    "models['peoplenet-transformer'].source.license disposition must be approved",
+    "models['peoplenet-transformer'].source.expected_sha256 must be a SHA-256 digest",
+    "models['peoplenet-transformer'].source.expected_size_bytes must be positive",
+    "models['peoplenet-transformer'].artifact_sha256 must be a SHA-256 digest",
+    "models['peoplenet-transformer'].artifact_size_bytes must be positive",
+    "models['peoplenet-transformer'].parent_checkpoint is required",
+    "models['peoplenet-transformer'].dataset_manifest_sha256 must be a SHA-256 digest",
+    "models['peoplenet-transformer'].export_sha256 must be a SHA-256 digest",
+    "models['peoplenet-transformer'].sbom_sha256 must be a SHA-256 digest",
+    "models['peoplenet-transformer'].rollback_target is required",
+    "models['mediapipe-pose-landmarker'].source.license disposition must be approved",
+    "models['mediapipe-pose-landmarker'].source.expected_sha256 must be a SHA-256 digest",
+    "models['mediapipe-pose-landmarker'].source.expected_size_bytes must be positive",
+    "models['mediapipe-pose-landmarker'].artifact_sha256 must be a SHA-256 digest",
+    "models['mediapipe-pose-landmarker'].artifact_size_bytes must be positive",
+    "models['mediapipe-pose-landmarker'].dataset_manifest_sha256 must be a SHA-256 digest",
+    "models['mediapipe-pose-landmarker'].export_sha256 must be a SHA-256 digest",
+    "models['mediapipe-pose-landmarker'].sbom_sha256 must be a SHA-256 digest",
+    "models['mediapipe-pose-landmarker'].rollback_target is required",
+    "models['mediapipe-hand-landmarker'].source.license disposition must be approved",
+    "models['mediapipe-hand-landmarker'].source.expected_sha256 must be a SHA-256 digest",
+    "models['mediapipe-hand-landmarker'].source.expected_size_bytes must be positive",
+    "models['mediapipe-hand-landmarker'].artifact_sha256 must be a SHA-256 digest",
+    "models['mediapipe-hand-landmarker'].artifact_size_bytes must be positive",
+    "models['mediapipe-hand-landmarker'].dataset_manifest_sha256 must be a SHA-256 digest",
+    "models['mediapipe-hand-landmarker'].export_sha256 must be a SHA-256 digest",
+    "models['mediapipe-hand-landmarker'].sbom_sha256 must be a SHA-256 digest",
+    "models['mediapipe-hand-landmarker'].rollback_target is required",
+    "models['siglip2-crop-head'].source.license disposition must be approved",
+    "models['siglip2-crop-head'].source.expected_sha256 must be a SHA-256 digest",
+    "models['siglip2-crop-head'].source.expected_size_bytes must be positive",
+    "models['siglip2-crop-head'].artifact_sha256 must be a SHA-256 digest",
+    "models['siglip2-crop-head'].artifact_size_bytes must be positive",
+    "models['siglip2-crop-head'].dataset_manifest_sha256 must be a SHA-256 digest",
+    "models['siglip2-crop-head'].export_sha256 must be a SHA-256 digest",
+    "models['siglip2-crop-head'].sbom_sha256 must be a SHA-256 digest",
+    "models['siglip2-crop-head'].rollback_target is required",
+    "models['lfm2-vl-reviewer'].source.license disposition must be approved",
+    "models['lfm2-vl-reviewer'].source.expected_sha256 must be a SHA-256 digest",
+    "models['lfm2-vl-reviewer'].source.expected_size_bytes must be positive",
+    "models['lfm2-vl-reviewer'].artifact_sha256 must be a SHA-256 digest",
+    "models['lfm2-vl-reviewer'].artifact_size_bytes must be positive",
+    "models['lfm2-vl-reviewer'].dataset_manifest_sha256 must be a SHA-256 digest",
+    "models['lfm2-vl-reviewer'].export_sha256 must be a SHA-256 digest",
+    "models['lfm2-vl-reviewer'].sbom_sha256 must be a SHA-256 digest",
+    "models['lfm2-vl-reviewer'].rollback_target is required",
+    "engines['peoplenet-transformer-fp16-rtx3090'].plan_sha256 must be a SHA-256 digest",
+    "engines['peoplenet-transformer-fp16-rtx3090'].model_sha256 must be a SHA-256 digest",
+    "engines['peoplenet-transformer-fp16-rtx3090'].export_sha256 must be a SHA-256 digest",
+    "engines['peoplenet-transformer-fp16-rtx3090'].input_contract_sha256 must be a SHA-256 digest",
+    "engines['peoplenet-transformer-fp16-rtx3090'].calibration_sha256 must be a SHA-256 digest",
+    "engines['peoplenet-transformer-fp16-rtx3090'].build_image_sha256 must be a SHA-256 digest",
+    "engines['siglip2-crop-head-fp16-rtx3090'].plan_sha256 must be a SHA-256 digest",
+    "engines['siglip2-crop-head-fp16-rtx3090'].model_sha256 must be a SHA-256 digest",
+    "engines['siglip2-crop-head-fp16-rtx3090'].export_sha256 must be a SHA-256 digest",
+    "engines['siglip2-crop-head-fp16-rtx3090'].input_contract_sha256 must be a SHA-256 digest",
+    "engines['siglip2-crop-head-fp16-rtx3090'].calibration_sha256 must be a SHA-256 digest",
+    "engines['siglip2-crop-head-fp16-rtx3090'].build_image_sha256 must be a SHA-256 digest",
+    "artifact root was not supplied; local model files cannot be verified",
+    "replay manifest is not sealed; metadata-only/synthetic packs cannot qualify",
+    "stream-01: source_kind is not an approved local replay",
+    "stream-01: clip_sha256 is missing or invalid",
+    "stream-01: source_path is missing"
+  ],
+  "fault_injection": {
+    "reason": "runtime not run",
+    "status": "not-run"
+  },
+  "generated_at": "2026-08-24T01:09:06.719726+00:00",
+  "host": {
+    "docker": {
+      "info": {
+        "argv": [
+          "docker",
+          "info",
+          "--format",
+          "server={{.ServerVersion}} default={{.DefaultRuntime}}"
+        ],
+        "duration_seconds": 0.031,
+        "returncode": 0,
+        "status": "passed",
+        "stderr_tail": "",
+        "stdout_tail": "server=28.3.3 default=runc\n"
+      },
+      "runtime_names": [
+        "io.containerd.runc.v2",
+        "nvidia",
+        "runc"
+      ],
+      "runtimes": {
+        "argv": [
+          "docker",
+          "info",
+          "--format",
+          "{{range $name, $_ := .Runtimes}}{{$name}} {{end}}"
+        ],
+        "duration_seconds": 0.031,
+        "returncode": 0,
+        "status": "passed",
+        "stderr_tail": "",
+        "stdout_tail": "io.containerd.runc.v2 nvidia runc \n"
+      }
+    },
+    "errors": [],
+    "gpu": {
+      "command": {
+        "argv": [
+          "nvidia-smi",
+          "--query-gpu=name,compute_cap,driver_version,memory.total",
+          "--format=csv,noheader,nounits"
+        ],
+        "duration_seconds": 0.018,
+        "returncode": 0,
+        "status": "passed",
+        "stderr_tail": "",
+        "stdout_tail": "NVIDIA GeForce RTX 3090, 8.6, 580.126.09, 24576\n"
+      },
+      "raw": "NVIDIA GeForce RTX 3090, 8.6, 580.126.09, 24576"
+    },
+    "status": "ready"
+  },
+  "image": {
+    "errors": [
+      "exact image pull did not complete: timeout",
+      "exact digest-pinned image is not imported"
+    ],
+    "image": "nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759",
+    "inspect": {
+      "argv": [
+        "docker",
+        "image",
+        "inspect",
+        "nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759",
+        "--format",
+        "{{json .RepoDigests}}"
+      ],
+      "duration_seconds": 0.013,
+      "returncode": 1,
+      "status": "failed",
+      "stderr_tail": "Error response from daemon: No such image: nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759\n",
+      "stdout_tail": "\n"
+    },
+    "pull": {
+      "argv": [
+        "docker",
+        "pull",
+        "nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759"
+      ],
+      "duration_seconds": 30.006,
+      "returncode": null,
+      "status": "timeout",
+      "stderr_tail": "",
+      "stdout_tail": "nvcr.io/nvidia/deepstream@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759: Pulling from nvidia/deepstream\n707e32e9fc56: Pulling fs layer\nc15d1d6b2c11: Pulling fs layer\n7e97a8ec5681: Pulling fs layer\n894330fe1bf5: Pulling fs layer\n97707dfd1d40: Pulling fs layer\nd69ae92c3e1e: Pulling fs layer\na013d53fd443: Pulling fs layer\n18989d23e6f7: Pulling fs layer\n53638f96ad3c: Pulling fs layer\nedbefd2705db: Pulling fs layer\n4a10dab4bd4c: Pulling fs layer\n7ee32cc2089f: Pulling fs layer\n91eeea9164ed: Pulling fs layer\n8a97013af2f7: Pulling fs layer\ne7e3bed3cba2: Pulling fs layer\n28c7c853143d: Pulling fs layer\nb2b861b09905: Pulling fs layer\n1d6a93c741ac: Pulling fs layer\na013d53fd443: Waiting\nf805b9a60db2: Pulling fs layer\n18989d23e6f7: Waiting\n8f5df47fd444: Pulling fs layer\n53638f96ad3c: Waiting\n4a10dab4bd4c: Waiting\n0874059c255d: Pulling fs layer\n421eb8390334: Pulling fs layer\nedbefd2705db: Waiting\n7ee32cc2089f: Waiting\nb17fdbdb8751: Pulling fs layer\n91eeea9164ed: Waiting\ne7e3bed3cba2: Waiting\n8a97013af2f7: Waiting\n28c7c853143d: Waiting\nb906598a866a: Pulling fs layer\nb2b861b09905: Waiting\n1d6a93c741ac: Waiting\n61e89b5f801f: Pulling fs layer\nde8d67c8cb10: Pulling fs layer\nf805b9a60db2: Waiting\n97707dfd1d40: Waiting\n0e70ad721d2d: Pulling fs layer\n8f5df47fd444: Waiting\n6fdfb0a8926c: Pulling fs layer\n894330fe1bf5: Waiting\nb906598a866a: Waiting\n0874059c255d: Waiting\nf97772029369: Pulling fs layer\n61e89b5f801f: Waiting\n7f985f091771: Pulling fs layer\nb17fdbdb8751: Waiting\nf5c421d88502: Pulling fs layer\n6fdfb0a8926c: Waiting\nde8d67c8cb10: Waiting\n0e70ad721d2d: Waiting\n7f985f091771: Waiting\nf97772029369: Waiting\naa6a8a12baea: Pulling fs layer\n41def9356f0f: Pulling fs layer\nf5c421d88502: Waiting\nd56d6dcef3e6: Pulling fs layer\n1ed004c21be8: Pulling fs layer\naa6a8a12baea: Waiting\nd56d6dcef3e6: Waiting\n2d68fba7bd67: Pulling fs layer\n41def9356f0f: Waiting\ne255e657d296: Pulling fs layer\n1378e4de9e38: Pulling fs layer\n2d68fba7bd67: Waiting\n5ae0ec8ca676: Pulling fs layer\ne255e657d296: Waiting\n1378e4de9e38: Waiting\nffe713aeb75f: Pulling fs layer\n5ae0ec8ca676: Waiting\nfcd74f2f599b: Pulling fs layer\nffe713aeb75f: Waiting\n51d62298f456: Pulling fs layer\nfcd74f2f599b: Waiting\ne1a16d35e1c1: Pulling fs layer\n7d84f4b98c32: Pulling fs layer\nfcfb425631fb: Pulling fs layer\n237fe91f3a5d: Pulling fs layer\n51d62298f456: Waiting\n7d84f4b98c32: Waiting\ne1a16d35e1c1: Waiting\nfcfb425631fb: Waiting\n1cf4294f0699: Pulling fs layer\n1cf4294f0699: Waiting\n7e97a8ec5681: Verifying Checksum\n7e97a8ec5681: Download complete\n894330fe1bf5: Download complete\n707e32e9fc56: Verifying Checksum\n707e32e9fc56: Download complete\nd69ae92c3e1e: Download complete\n707e32e9fc56: Pull complete\na013d53fd443: Verifying Checksum\na013d53fd443: Download complete\n18989d23e6f7: Verifying Checksum\n18989d23e6f7: Download complete\n53638f96ad3c: Download complete\nedbefd2705db: Verifying Checksum\nedbefd2705db: Download complete\n4a10dab4bd4c: Verifying Checksum\n4a10dab4bd4c: Download complete\n7ee32cc2089f: Verifying Checksum\n7ee32cc2089f: Download complete\nc15d1d6b2c11: Verifying Checksum\nc15d1d6b2c11: Download complete\n8a97013af2f7: Verifying Checksum\n8a97013af2f7: Download complete\nc15d1d6b2c11: Pull complete\n91eeea9164ed: Verifying Checksum\n91eeea9164ed: Download complete\ne7e3bed3cba2: Verifying Checksum\ne7e3bed3cba2: Download complete\nb2b861b09905: Download complete\n7e97a8ec5681: Pull complete\n894330fe1bf5: Pull complete\n1d6a93c741ac: Verifying Checksum\n1d6a93c741ac: Download complete\nf805b9a60db2: Download complete\n8f5df47fd444: Download complete\n"
+    },
+    "status": "blocked"
+  },
+  "models": {
+    "errors": [
+      "models['peoplenet-transformer'].source.license disposition must be approved",
+      "models['peoplenet-transformer'].source.expected_sha256 must be a SHA-256 digest",
+      "models['peoplenet-transformer'].source.expected_size_bytes must be positive",
+      "models['peoplenet-transformer'].artifact_sha256 must be a SHA-256 digest",
+      "models['peoplenet-transformer'].artifact_size_bytes must be positive",
+      "models['peoplenet-transformer'].parent_checkpoint is required",
+      "models['peoplenet-transformer'].dataset_manifest_sha256 must be a SHA-256 digest",
+      "models['peoplenet-transformer'].export_sha256 must be a SHA-256 digest",
+      "models['peoplenet-transformer'].sbom_sha256 must be a SHA-256 digest",
+      "models['peoplenet-transformer'].rollback_target is required",
+      "models['mediapipe-pose-landmarker'].source.license disposition must be approved",
+      "models['mediapipe-pose-landmarker'].source.expected_sha256 must be a SHA-256 digest",
+      "models['mediapipe-pose-landmarker'].source.expected_size_bytes must be positive",
+      "models['mediapipe-pose-landmarker'].artifact_sha256 must be a SHA-256 digest",
+      "models['mediapipe-pose-landmarker'].artifact_size_bytes must be positive",
+      "models['mediapipe-pose-landmarker'].dataset_manifest_sha256 must be a SHA-256 digest",
+      "models['mediapipe-pose-landmarker'].export_sha256 must be a SHA-256 digest",
+      "models['mediapipe-pose-landmarker'].sbom_sha256 must be a SHA-256 digest",
+      "models['mediapipe-pose-landmarker'].rollback_target is required",
+      "models['mediapipe-hand-landmarker'].source.license disposition must be approved",
+      "models['mediapipe-hand-landmarker'].source.expected_sha256 must be a SHA-256 digest",
+      "models['mediapipe-hand-landmarker'].source.expected_size_bytes must be positive",
+      "models['mediapipe-hand-landmarker'].artifact_sha256 must be a SHA-256 digest",
+      "models['mediapipe-hand-landmarker'].artifact_size_bytes must be positive",
+      "models['mediapipe-hand-landmarker'].dataset_manifest_sha256 must be a SHA-256 digest",
+      "models['mediapipe-hand-landmarker'].export_sha256 must be a SHA-256 digest",
+      "models['mediapipe-hand-landmarker'].sbom_sha256 must be a SHA-256 digest",
+      "models['mediapipe-hand-landmarker'].rollback_target is required",
+      "models['siglip2-crop-head'].source.license disposition must be approved",
+      "models['siglip2-crop-head'].source.expected_sha256 must be a SHA-256 digest",
+      "models['siglip2-crop-head'].source.expected_size_bytes must be positive",
+      "models['siglip2-crop-head'].artifact_sha256 must be a SHA-256 digest",
+      "models['siglip2-crop-head'].artifact_size_bytes must be positive",
+      "models['siglip2-crop-head'].dataset_manifest_sha256 must be a SHA-256 digest",
+      "models['siglip2-crop-head'].export_sha256 must be a SHA-256 digest",
+      "models['siglip2-crop-head'].sbom_sha256 must be a SHA-256 digest",
+      "models['siglip2-crop-head'].rollback_target is required",
+      "models['lfm2-vl-reviewer'].source.license disposition must be approved",
+      "models['lfm2-vl-reviewer'].source.expected_sha256 must be a SHA-256 digest",
+      "models['lfm2-vl-reviewer'].source.expected_size_bytes must be positive",
+      "models['lfm2-vl-reviewer'].artifact_sha256 must be a SHA-256 digest",
+      "models['lfm2-vl-reviewer'].artifact_size_bytes must be positive",
+      "models['lfm2-vl-reviewer'].dataset_manifest_sha256 must be a SHA-256 digest",
+      "models['lfm2-vl-reviewer'].export_sha256 must be a SHA-256 digest",
+      "models['lfm2-vl-reviewer'].sbom_sha256 must be a SHA-256 digest",
+      "models['lfm2-vl-reviewer'].rollback_target is required",
+      "engines['peoplenet-transformer-fp16-rtx3090'].plan_sha256 must be a SHA-256 digest",
+      "engines['peoplenet-transformer-fp16-rtx3090'].model_sha256 must be a SHA-256 digest",
+      "engines['peoplenet-transformer-fp16-rtx3090'].export_sha256 must be a SHA-256 digest",
+      "engines['peoplenet-transformer-fp16-rtx3090'].input_contract_sha256 must be a SHA-256 digest",
+      "engines['peoplenet-transformer-fp16-rtx3090'].calibration_sha256 must be a SHA-256 digest",
+      "engines['peoplenet-transformer-fp16-rtx3090'].build_image_sha256 must be a SHA-256 digest",
+      "engines['siglip2-crop-head-fp16-rtx3090'].plan_sha256 must be a SHA-256 digest",
+      "engines['siglip2-crop-head-fp16-rtx3090'].model_sha256 must be a SHA-256 digest",
+      "engines['siglip2-crop-head-fp16-rtx3090'].export_sha256 must be a SHA-256 digest",
+      "engines['siglip2-crop-head-fp16-rtx3090'].input_contract_sha256 must be a SHA-256 digest",
+      "engines['siglip2-crop-head-fp16-rtx3090'].calibration_sha256 must be a SHA-256 digest",
+      "engines['siglip2-crop-head-fp16-rtx3090'].build_image_sha256 must be a SHA-256 digest",
+      "artifact root was not supplied; local model files cannot be verified"
+    ],
+    "manifest_sha256": "d4cc8d867b1479ba4e22ff5f9ff0520bbfd7a1301729ac967f59f676046ad9f6",
+    "path": "/mnt/HDD2/proj_walnutek/tp_smoke_detect/.worktrees/feature/gpu-mandatory-release/.worktrees/feature/GPU-107-qualification/model-repository/manifest/model-release.json",
+    "status": "blocked"
+  },
+  "profile": "rtx3090",
+  "qualification_label": "unqualified",
+  "recovery_steps": [
+    "Import the exact digest-pinned DeepStream 7.0 Triton image and retain its SBOM/vulnerability disposition.",
+    "Provide approved local model files and complete model/engine hashes, licenses, lineage, calibration, and rollback receipts.",
+    "Replace the metadata-only replay pack with consented local clips, source_path values, immutable clip hashes, and qualification_state=sealed.",
+    "Run a reviewed runtime command that exercises NVDEC, all required model roles, Triton, CandidateProcessingService, audit persistence, and muted shadow audio.",
+    "Re-run GPU-107 one-stream, then the 20-stream two-hour gate and explicit timeout/OOM/stall/mismatch/reset injections."
+  ],
+  "replay": {
+    "errors": [
+      "replay manifest is not sealed; metadata-only/synthetic packs cannot qualify",
+      "stream-01: source_kind is not an approved local replay",
+      "stream-01: clip_sha256 is missing or invalid",
+      "stream-01: source_path is missing"
+    ],
+    "manifest_sha256": "cfde3fbacbcb70891f37bd66b9b6a9c6ea9ff31f978b878cc47e8b557a887bf1",
+    "path": "/mnt/HDD2/proj_walnutek/tp_smoke_detect/.worktrees/feature/gpu-mandatory-release/.worktrees/feature/GPU-107-qualification/tests/load/replay-pack.yaml",
+    "status": "blocked"
+  },
+  "requested_gate": {
+    "analysis_fps": 10.0,
+    "duration_hours": 0.0,
+    "real_runtime": false,
+    "streams": 1
+  },
+  "runtime": {
+    "reason": "prerequisites blocked",
+    "status": "not-run"
+  },
+  "schema_version": "gpu.qualification-receipt.v1",
+  "status": "blocked",
+  "ticket": "GPU-107"
+}
