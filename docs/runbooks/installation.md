@@ -86,7 +86,43 @@ model-origin, retention, or agency gate is unresolved. The future-site profile
 must not be enabled until PostgreSQL/MQTT adapters and their acceptance tests
 are released.
 
-## 5. Uninstall and preserve evidence
+## 5. RTX 3090 GPU profile (lab only)
+
+The GPU profile is opt-in and remains shadow/audio-muted. It uses the pinned
+DeepStream 7.0/Triton 23.10 RTX 3090 row from `deploy/image-pins.yaml`. It does
+not qualify NGC availability, model quality, 20-camera capacity, or production
+hardware. Import approved image archives and the model store before starting:
+
+    scripts/import_gpu_bundle.sh /approved/tp-smoke-detect-gpu-bundle
+    docker compose --profile gpu-rtx3090 -f deploy/compose.yaml config --quiet
+    docker compose --profile gpu-rtx3090 -f deploy/compose.yaml up -d
+
+Startup is fail-closed. `gpu-preflight` requires resolved image digests, SBOM
+receipts, complete model/engine hashes, and a separately produced
+`docs/dev_artifacts/qualification/gpu-readiness.json` with status
+`one-stream-ready`. Missing artifacts keep `baseline-model`, `media-gpu`, and
+the aggregate `gpu-readiness` service unhealthy. The optional `gpu-vlm` profile
+is disabled and exits unless a separately qualified reviewer image is supplied.
+
+Inspect independent readiness and GPU logs:
+
+    docker compose --profile gpu-rtx3090 -f deploy/compose.yaml ps
+    docker compose --profile gpu-rtx3090 -f deploy/compose.yaml logs --tail=100 gpu-preflight baseline-model media-gpu candidate-consumer gpu-readiness
+    curl --fail http://127.0.0.1:8000/health/ready
+
+The Compose GPU network is internal and has no MQTT or Triton host ports. Only
+media, baseline model, and the optional reviewer receive the reserved NVIDIA
+device. Camera/replay input, model repository, and retained artifacts are
+read-only mounts; model loaders set offline mode and never fetch a URL.
+
+Create a bundle only after image import, SBOM, and vulnerability review:
+
+    scripts/export_gpu_bundle.sh --output /approved/tp-smoke-detect-gpu-bundle
+
+This release still requires GPU-107's real one-stream and 20-stream receipts;
+an available CUDA device or a successful Compose parse is not qualification.
+
+## 6. Uninstall and preserve evidence
 
     docker compose -f deploy/compose.yaml down
 

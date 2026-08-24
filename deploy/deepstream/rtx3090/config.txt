@@ -1,0 +1,24 @@
+# GPU-105 template; replace URI and qualified model config paths in the bundle.
+[application]
+enable-perf-measurement=1
+perf-measurement-interval-sec=10
+[source0]
+enable=1
+type=3
+uri=file:///media/replay/QUALIFY_WITH_LOCAL_REPLAY.mp4
+num-sources=1
+[streammux]
+batch-size=1
+live-source=0
+batched-push-timeout=40000
+[primary-gie]
+enable=1
+gie-unique-id=1
+config-file=/models/config/peoplenet-transformer-nvinfer.txt
+[tracker]
+enable=1
+tracker-width=640
+tracker-height=384
+[sink0]
+enable=0
+type=1

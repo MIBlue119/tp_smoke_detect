@@ -18,6 +18,7 @@ from ..adapters.persistence.sqlite import (
     IdempotencyConflictError,
     SQLiteAuditRepository,
 )
+from ..application.candidate_processing import build_candidate_processing_service
 from ..application.request_audio import AudioRequestService
 from ..contracts import RunMode
 from ..domain.policy.audio import AudioPolicy, AudioPolicyConfig
@@ -122,6 +123,18 @@ def create_app(
     app.state.metrics = OperationalMetrics()
     app.state.health = HealthRegistry(app.state.metrics)
     app.state.health.set_component("database", HealthState.HEALTHY)
+    # Bootstrap the candidate service in the same dependency graph as the API.
+    # The MQTT consumer is intentionally started by the dedicated
+    # ``candidate-consumer`` Compose service; keeping construction here makes
+    # API readiness and live processing use the same policy/repository wiring
+    # without allowing the ASGI import path to create a broker connection.
+    app.state.candidate_processing = build_candidate_processing_service(
+        repo,
+        settings=app_settings,
+        audio_controller=app.state.audio_controller,
+        metrics=app.state.metrics,
+        health=app.state.health,
+    )
 
     # YAML camera profiles are authoritative configuration. Reconcile every
     # mounted profile on every boot and deactivate config-managed profiles
@@ -165,6 +178,7 @@ def create_app(
     @app.get("/health/ready", tags=["health"])
     def ready(repository: Repo) -> dict[str, object]:
         healthy = repository.health()
+        candidate_ready = app.state.candidate_processing.readiness()
         app.state.health.set_component(
             "database",
             HealthState.HEALTHY if healthy else HealthState.DEGRADED,
@@ -172,17 +186,17 @@ def create_app(
         )
         snapshot = app.state.health.snapshot()
         payload: dict[str, object] = {
-            "status": "ready" if healthy else "degraded",
+            "status": "ready" if healthy and candidate_ready else "degraded",
             # Keep the original boolean database component for API clients;
             # richer states live in the additive component_health field.
-            "components": {"database": healthy},
+            "components": {"database": healthy, "candidate-processing": candidate_ready},
             "component_health": snapshot["components"],
             "cameras": snapshot["cameras"],
             "affected_camera_count": snapshot["affected_camera_count"],
             "queue_depth": snapshot["queue_depth"],
             "last_successful_activity": snapshot["last_successful_activity"],
         }
-        if not healthy:
+        if not healthy or not candidate_ready:
             raise HTTPException(status_code=503, detail=payload)
         return payload
 

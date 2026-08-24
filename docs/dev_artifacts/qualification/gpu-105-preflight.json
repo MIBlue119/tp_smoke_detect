@@ -1,0 +1,108 @@
+{
+  "errors": [
+    "core: SBOM receipt is unresolved",
+    "mqtt: digest is unresolved",
+    "mqtt: SBOM receipt is unresolved",
+    "prometheus: digest is unresolved",
+    "prometheus: SBOM receipt is unresolved",
+    "deepstream_triton_rtx3090: SBOM receipt is unresolved",
+    "model manifest: models['peoplenet-transformer'].source.license disposition must be approved",
+    "model manifest: models['peoplenet-transformer'].source.expected_sha256 must be a SHA-256 digest",
+    "model manifest: models['peoplenet-transformer'].source.expected_size_bytes must be positive",
+    "model manifest: models['peoplenet-transformer'].artifact_sha256 must be a SHA-256 digest",
+    "model manifest: models['peoplenet-transformer'].artifact_size_bytes must be positive",
+    "model manifest: models['peoplenet-transformer'].parent_checkpoint is required",
+    "model manifest: models['peoplenet-transformer'].dataset_manifest_sha256 must be a SHA-256 digest",
+    "model manifest: models['peoplenet-transformer'].export_sha256 must be a SHA-256 digest",
+    "model manifest: models['peoplenet-transformer'].sbom_sha256 must be a SHA-256 digest",
+    "model manifest: models['peoplenet-transformer'].rollback_target is required",
+    "model manifest: models['mediapipe-pose-landmarker'].source.license disposition must be approved",
+    "model manifest: models['mediapipe-pose-landmarker'].source.expected_sha256 must be a SHA-256 digest",
+    "model manifest: models['mediapipe-pose-landmarker'].source.expected_size_bytes must be positive",
+    "model manifest: models['mediapipe-pose-landmarker'].artifact_sha256 must be a SHA-256 digest",
+    "model manifest: models['mediapipe-pose-landmarker'].artifact_size_bytes must be positive",
+    "model manifest: models['mediapipe-pose-landmarker'].dataset_manifest_sha256 must be a SHA-256 digest",
+    "model manifest: models['mediapipe-pose-landmarker'].export_sha256 must be a SHA-256 digest",
+    "model manifest: models['mediapipe-pose-landmarker'].sbom_sha256 must be a SHA-256 digest",
+    "model manifest: models['mediapipe-pose-landmarker'].rollback_target is required",
+    "model manifest: models['mediapipe-hand-landmarker'].source.license disposition must be approved",
+    "model manifest: models['mediapipe-hand-landmarker'].source.expected_sha256 must be a SHA-256 digest",
+    "model manifest: models['mediapipe-hand-landmarker'].source.expected_size_bytes must be positive",
+    "model manifest: models['mediapipe-hand-landmarker'].artifact_sha256 must be a SHA-256 digest",
+    "model manifest: models['mediapipe-hand-landmarker'].artifact_size_bytes must be positive",
+    "model manifest: models['mediapipe-hand-landmarker'].dataset_manifest_sha256 must be a SHA-256 digest",
+    "model manifest: models['mediapipe-hand-landmarker'].export_sha256 must be a SHA-256 digest",
+    "model manifest: models['mediapipe-hand-landmarker'].sbom_sha256 must be a SHA-256 digest",
+    "model manifest: models['mediapipe-hand-landmarker'].rollback_target is required",
+    "model manifest: models['siglip2-crop-head'].source.license disposition must be approved",
+    "model manifest: models['siglip2-crop-head'].source.expected_sha256 must be a SHA-256 digest",
+    "model manifest: models['siglip2-crop-head'].source.expected_size_bytes must be positive",
+    "model manifest: models['siglip2-crop-head'].artifact_sha256 must be a SHA-256 digest",
+    "model manifest: models['siglip2-crop-head'].artifact_size_bytes must be positive",
+    "model manifest: models['siglip2-crop-head'].dataset_manifest_sha256 must be a SHA-256 digest",
+    "model manifest: models['siglip2-crop-head'].export_sha256 must be a SHA-256 digest",
+    "model manifest: models['siglip2-crop-head'].sbom_sha256 must be a SHA-256 digest",
+    "model manifest: models['siglip2-crop-head'].rollback_target is required",
+    "model manifest: models['lfm2-vl-reviewer'].source.license disposition must be approved",
+    "model manifest: models['lfm2-vl-reviewer'].source.expected_sha256 must be a SHA-256 digest",
+    "model manifest: models['lfm2-vl-reviewer'].source.expected_size_bytes must be positive",
+    "model manifest: models['lfm2-vl-reviewer'].artifact_sha256 must be a SHA-256 digest",
+    "model manifest: models['lfm2-vl-reviewer'].artifact_size_bytes must be positive",
+    "model manifest: models['lfm2-vl-reviewer'].dataset_manifest_sha256 must be a SHA-256 digest",
+    "model manifest: models['lfm2-vl-reviewer'].export_sha256 must be a SHA-256 digest",
+    "model manifest: models['lfm2-vl-reviewer'].sbom_sha256 must be a SHA-256 digest",
+    "model manifest: models['lfm2-vl-reviewer'].rollback_target is required",
+    "model manifest: engines['peoplenet-transformer-fp16-rtx3090'].plan_sha256 must be a SHA-256 digest",
+    "model manifest: engines['peoplenet-transformer-fp16-rtx3090'].model_sha256 must be a SHA-256 digest",
+    "model manifest: engines['peoplenet-transformer-fp16-rtx3090'].export_sha256 must be a SHA-256 digest",
+    "model manifest: engines['peoplenet-transformer-fp16-rtx3090'].input_contract_sha256 must be a SHA-256 digest",
+    "model manifest: engines['peoplenet-transformer-fp16-rtx3090'].calibration_sha256 must be a SHA-256 digest",
+    "model manifest: engines['peoplenet-transformer-fp16-rtx3090'].build_image_sha256 must be a SHA-256 digest",
+    "model manifest: engines['siglip2-crop-head-fp16-rtx3090'].plan_sha256 must be a SHA-256 digest",
+    "model manifest: engines['siglip2-crop-head-fp16-rtx3090'].model_sha256 must be a SHA-256 digest",
+    "model manifest: engines['siglip2-crop-head-fp16-rtx3090'].export_sha256 must be a SHA-256 digest",
+    "model manifest: engines['siglip2-crop-head-fp16-rtx3090'].input_contract_sha256 must be a SHA-256 digest",
+    "model manifest: engines['siglip2-crop-head-fp16-rtx3090'].calibration_sha256 must be a SHA-256 digest",
+    "model manifest: engines['siglip2-crop-head-fp16-rtx3090'].build_image_sha256 must be a SHA-256 digest",
+    "model artifact root was not supplied"
+  ],
+  "image_archive": {
+    "status": "not-provided"
+  },
+  "images": [
+    {
+      "digest": "sha256:081075da77b2b55c23c088251026fb69a7b2bf92471e491ff5fd75c192fd38e5",
+      "id": "core",
+      "status": "ok"
+    },
+    {
+      "digest": "REQUIRED-BEFORE-RELEASE",
+      "id": "mqtt",
+      "status": "blocked"
+    },
+    {
+      "digest": "REQUIRED-BEFORE-RELEASE",
+      "id": "prometheus",
+      "status": "blocked"
+    },
+    {
+      "digest": "sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759",
+      "id": "deepstream_triton_rtx3090",
+      "status": "ok"
+    }
+  ],
+  "model_manifest": {
+    "digest": "d4cc8d867b1479ba4e22ff5f9ff0520bbfd7a1301729ac967f59f676046ad9f6",
+    "path": "model-repository/manifest/model-release.json",
+    "status": "blocked"
+  },
+  "offline": true,
+  "one_stream": {
+    "status": "not-provided"
+  },
+  "sbom": {
+    "status": "not-provided"
+  },
+  "schema_version": "gpu.offline-bundle-receipt.v1",
+  "status": "blocked"
+}

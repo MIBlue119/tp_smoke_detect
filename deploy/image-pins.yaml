@@ -12,26 +12,31 @@ images:
     digest: sha256:081075da77b2b55c23c088251026fb69a7b2bf92471e491ff5fd75c192fd38e5
     purpose: cpu-reference-and-api
     runtime_network: disabled
+    sbom: REQUIRED-BEFORE-RELEASE
   postgres:
     reference: postgres:16.4-alpine
     digest: "REQUIRED-BEFORE-RELEASE"
     purpose: future-site-audit-store (not in default CPU profile)
     runtime_network: internal-only
+    sbom: REQUIRED-BEFORE-RELEASE
   mqtt:
     reference: eclipse-mosquitto:2.0.20
     digest: "REQUIRED-BEFORE-RELEASE"
     purpose: future-site-metadata-only-candidate-bus (not in default CPU profile)
     runtime_network: internal-only
+    sbom: REQUIRED-BEFORE-RELEASE
   prometheus:
     reference: prom/prometheus:v2.54.1
     digest: "REQUIRED-BEFORE-RELEASE"
     purpose: local-metrics
     runtime_network: internal-only
+    sbom: REQUIRED-BEFORE-RELEASE
   media_reference:
     reference: ubuntu:24.04
     digest: "REQUIRED-BEFORE-RELEASE"
     purpose: cpu-media-boundary-reference
     runtime_network: disabled
+    sbom: REQUIRED-BEFORE-RELEASE
   deepstream_triton_rtx3090:
     # Immutable manifest-list digest; qualification resolves linux/amd64.
     reference: nvcr.io/nvidia/deepstream:7.0-triton-multiarch
@@ -54,6 +59,13 @@ images:
     sbom: REQUIRED-BEFORE-RELEASE
     import_status: not-imported
     qualification_status: unqualified
+  reviewer_lfm2vl:
+    reference: tp-smoke-detect/reviewer-lfm2vl
+    digest: REQUIRED-BEFORE-RELEASE
+    purpose: optional-disabled-reviewer
+    runtime_network: internal-only
+    sbom: REQUIRED-BEFORE-RELEASE
+    qualification_status: disabled-unqualified
 
 gpu_profiles:
   rtx3090:
