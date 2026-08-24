@@ -122,7 +122,26 @@ Create a bundle only after image import, SBOM, and vulnerability review:
 This release still requires GPU-107's real one-stream and 20-stream receipts;
 an available CUDA device or a successful Compose parse is not qualification.
 
-## 6. Uninstall and preserve evidence
+## 6. GPU vertical-slice handoff (CPU-runnable)
+
+The checked-in integration test exercises the metadata-only contract between
+the DeepStream-shaped producer, candidate consumer, deterministic core, audit
+store, bounded metrics, and muted shadow audio:
+
+    uv run pytest tests/e2e/test_gpu_vertical_slice.py -q
+
+This proves wiring and fail-closed behavior only. It does not execute NVDEC,
+TensorRT, Triton, model weights, or real camera media. The candidate consumer
+must load `configs/runtime.gpu-rtx3090.yaml`; that file intentionally contains
+only `AppSettings` fields. Runtime/model identity belongs to
+`configs/model-profile-gpu-rtx3090.yaml` and the immutable model manifest.
+
+The GPU readiness server also requires the candidate consumer's shared
+`/run/gpu-state/candidate-ready` file, in addition to the one-stream receipt
+and core/Triton readiness. A missing or stale readiness boundary remains
+unready.
+
+## 7. Uninstall and preserve evidence
 
     docker compose -f deploy/compose.yaml down
 

@@ -11,6 +11,7 @@ dist/
 build/
 native/deepstream/build-debug/
 native/deepstream/build-release/
+native/deepstream/build-asan/
 native/deepstream/build-gpu102-*/
 .build/
 *.egg-info/

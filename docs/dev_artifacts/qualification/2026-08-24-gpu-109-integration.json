@@ -1,0 +1,35 @@
+{
+  "schema_version": "gpu.integration-qualification.v1",
+  "ticket": "GPU-109",
+  "profile": "rtx3090",
+  "status": "gpu-capable-scaffold-unqualified",
+  "release_claim": "unqualified",
+  "model_combination": [
+    "PeopleNet Transformer person detector",
+    "NvDCF tracker",
+    "MediaPipe Tasks GPU pose and hand landmarkers",
+    "SigLIP 2 crop head",
+    "LFM2-VL reviewer disabled pending independent promotion gates"
+  ],
+  "cpu_vertical_slice": {
+    "status": "passed",
+    "command": "uv run pytest tests/e2e/test_gpu_vertical_slice.py -q",
+    "passed": 4,
+    "raw_pixels": false,
+    "audio_mode": "shadow_muted"
+  },
+  "compose_readiness": {
+    "status": "passed",
+    "command": "docker compose -f deploy/compose.yaml config --quiet",
+    "candidate_ready_boundary": "/run/gpu-state/candidate-ready"
+  },
+  "external_gpu_gates": {
+    "R1_host_and_import": "blocked_or_unqualified",
+    "R11_one_stream": "not_run",
+    "R12_rtx3090_20_stream_two_hour": "not_run",
+    "R13_professional_gpu_24_hour": "not_run",
+    "sealed_quality": "blocked",
+    "model_provenance": "blocked"
+  },
+  "claim_boundary": "Do not call this lab-qualified or production-capable until GPU-107 real R11/R12 receipts and later site gates are attached."
+}
