@@ -88,3 +88,26 @@ def test_thresholds_are_validated() -> None:
         assert "exit_confidence" in str(exc)
     else:
         raise AssertionError("invalid hysteresis thresholds were accepted")
+
+
+def test_active_candidate_uses_exit_confidence_hysteresis() -> None:
+    config = FusionConfig(
+        entry_confidence=0.55, exit_confidence=0.5, association_threshold=0.1, exit_gap_frames=1
+    )
+    strong = _frames(4)
+    weak_person = _person().persons[0]
+    weak_cigarette = CigaretteDetection((0.28, 0.23, 0.32, 0.28), 0.5)
+    weak = tuple(
+        FrameDetections(
+            index + 4,
+            (index + 4) * 33_333_333,
+            (PersonDetection(weak_person.box, weak_person.keypoints, 0.5, "person-a"),),
+            (weak_cigarette,),
+        )
+        for index in range(2)
+    )
+    result = DeterministicFusion(config).process(strong + weak)
+    assert result.frames[-1].state is EventState.UNCLEAR
+    assert result.frames[-1].reason_codes == ("below_threshold",)
+    assert len(result.events) == 1
+    assert result.events[0].end_pts_ns == 3 * 33_333_333

@@ -135,7 +135,7 @@ def require_isolated_environment() -> None:
 
 def _torch() -> Any:
     try:
-        import torch  # type: ignore[import-not-found]
+        import torch
     except ImportError as exc:
         raise ModelAdapterError("PyTorch is required only in the optional GPU environment") from exc
     return torch
@@ -168,7 +168,7 @@ def _load_yolo(spec: ModelSpec, *, enforce_isolation: bool) -> Any:
     if enforce_isolation:
         require_isolated_environment()
     try:
-        from ultralytics import YOLO  # type: ignore[import-not-found]
+        from ultralytics import YOLO  # type: ignore[import-untyped]
     except ImportError as exc:
         raise ModelAdapterError(
             "Ultralytics is required only in the optional isolated GPU environment"

@@ -234,7 +234,7 @@ def _box(
     color: tuple[int, int, int],
     label: str,
 ) -> None:
-    if not isinstance(box, (list, tuple)) or len(box) != 4:
+    if not isinstance(box, list | tuple) or len(box) != 4:
         return
     x1, y1, x2, y2 = (float(value) for value in box)
     coords = (round(x1 * width), round(y1 * height), round(x2 * width), round(y2 * height))
@@ -244,21 +244,53 @@ def _box(
 
 
 def _draw_frame(
-    image: Image.Image, entries: list[Mapping[str, Any]], payload: Mapping[str, Any]
+    image: Image.Image,
+    entries: list[Mapping[str, Any]],
+    payload: Mapping[str, Any],
+    frame_metadata: Mapping[str, Any] | None = None,
 ) -> None:
     draw = ImageDraw.Draw(image, "RGBA")
     width, height = image.size
     runtime = payload["runtime"]
     models = payload["models"]
-    model_ids = ",".join(str(item.get("role", "unknown")) for item in models)
-    badge = (
-        f"GPU {runtime.get('device_name', 'unknown')} | {model_ids} | "
-        f"run {payload.get('run_id', 'unknown')}"
+
+    def short_revision(value: Any) -> str:
+        text = str(value)
+        return text.rsplit("/", 1)[-1][-14:]
+
+    model_ids = " ".join(
+        f"{item.get('role', 'unknown')}={short_revision(item.get('model_revision', 'unknown'))}"
+        for item in models
     )
-    draw.rectangle((0, 0, width, 48), fill=(0, 0, 0, 190))
+    metadata = frame_metadata or (entries[0] if entries else {})
+    frame_index = metadata.get("frame_index", "?")
+    pts_ns = metadata.get("source_pts_ns")
+    timestamp = (
+        f"t={float(pts_ns) / 1_000_000_000:.3f}s"
+        if isinstance(pts_ns, int | float)
+        else "t=unknown"
+    )
+    badge = (
+        f"frame={frame_index} {timestamp} | GPU {runtime.get('device_name', 'unknown')} | "
+        f"{model_ids}"
+    )
+    draw.rectangle((0, 0, width, 58), fill=(0, 0, 0, 205))
     draw.text((8, 5), BANNER, fill=(255, 235, 80), font=_font(18))
-    draw.text((8, 27), badge, fill=(240, 240, 240), font=_font(12))
-    for entry in entries:
+    draw.text((8, 29), badge, fill=(240, 240, 240), font=_font(11))
+    # Keep the overlay readable on crowded frames.  Candidate/unclear entries
+    # win over low-value unmatched boxes; every omitted item remains in the
+    # immutable JSON evidence.
+    ranked = sorted(
+        entries,
+        key=lambda entry: (
+            {"candidate": 0, "unclear": 1, "insufficient_evidence": 2, "baseline_miss": 3}.get(
+                str(entry.get("state")), 4
+            ),
+            -float(entry.get("association_score") or 0),
+        ),
+    )[:4]
+    summary_lines: list[str] = []
+    for entry in ranked:
         state = str(entry.get("state", "insufficient_evidence"))
         color = _STATE_COLORS.get(state, (220, 220, 220))
         track = entry.get("track_id") or "untracked"
@@ -272,29 +304,47 @@ def _draw_frame(
                 ("c", cigarette_conf),
                 ("a", score),
             )
-            if isinstance(value, (float, int))
+            if isinstance(value, float | int)
         )
-        _box(draw, entry.get("person_box"), width, height, color, f"person {track} {scores}")
+        _box(draw, entry.get("person_box"), width, height, color, f"{track} {scores}")
         _box(draw, entry.get("cigarette_box"), width, height, (255, 90, 210), "cigarette")
         for point in entry.get("pose_keypoints", []):
-            if isinstance(point, (list, tuple)) and len(point) >= 3 and float(point[2]) > 0:
+            if isinstance(point, list | tuple) and len(point) >= 3 and float(point[2]) > 0:
                 x, y = round(float(point[0]) * width), round(float(point[1]) * height)
                 radius = max(2, round(min(width, height) / 180))
                 draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=color)
         reason = ",".join(str(item) for item in entry.get("reason_codes", []))
-        text = f"track={track} state={state}"
+        text = f"{track} {state}"
         if reason:
             text += f" reason={reason}"
-        draw.rectangle((8, height - 34, width - 8, height - 8), fill=(0, 0, 0, 185))
-        draw.text((14, height - 30), text, fill=color, font=_font(14))
+        summary_lines.append(text)
+    if not summary_lines:
+        summary_lines.append("no person-cigarette association; evidence retained in JSON")
+    panel_height = 24 + len(summary_lines) * 18
+    draw.rectangle((8, height - panel_height - 8, width - 8, height - 8), fill=(0, 0, 0, 190))
+    draw.text(
+        (14, height - panel_height + 1),
+        "SUMMARY (max 4 overlays)",
+        fill=(255, 235, 80),
+        font=_font(12),
+    )
+    for index, line in enumerate(summary_lines):
+        draw.text(
+            (14, height - panel_height + 20 + index * 18),
+            line[:120],
+            fill=(235, 235, 235),
+            font=_font(11),
+        )
 
 
 def _encode_frames(
     source: Path, output: Path, payload: Mapping[str, Any], probe: MediaProbe, crf: int
 ) -> int:
     grouped: dict[int, list[Mapping[str, Any]]] = defaultdict(list)
+    metadata_by_frame: dict[int, Mapping[str, Any]] = {}
     for entry in payload.get("frames", []):
         grouped[int(entry["frame_index"])].append(entry)
+        metadata_by_frame.setdefault(int(entry["frame_index"]), entry)
     frame_bytes = probe.width * probe.height * 3
     decoder = subprocess.Popen(
         [
@@ -354,7 +404,7 @@ def _encode_frames(
             if len(raw) != frame_bytes:
                 raise AnnotationError("source decoder returned a partial frame")
             image = Image.frombytes("RGB", (probe.width, probe.height), raw)
-            _draw_frame(image, grouped.get(count, []), payload)
+            _draw_frame(image, grouped.get(count, []), payload, metadata_by_frame.get(count))
             encoder.stdin.write(image.tobytes())
             count += 1
     finally:
