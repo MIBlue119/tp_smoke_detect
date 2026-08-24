@@ -1,11 +1,11 @@
 # VIDEO-302 media plane. Build one of the explicit targets:
 #   docker build --target reference -f deploy/Dockerfile.media .
 #   docker build --target deepstream -f deploy/Dockerfile.media \
-#     --build-arg DEEPSTREAM_IMAGE=nvcr.io/nvidia/deepstream:9.1-devel@sha256:<digest> .
+#     --build-arg DEEPSTREAM_IMAGE=nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:<digest> .
 # The DeepStream digest, host driver, and image import receipt are mandatory
 # qualification inputs. The default target intentionally contains no NVIDIA SDK.
 
-ARG DEEPSTREAM_IMAGE=nvcr.io/nvidia/deepstream:9.1-devel
+ARG DEEPSTREAM_IMAGE=nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759
 
 FROM ubuntu:24.04 AS reference-build
 RUN apt-get update \
@@ -38,5 +38,14 @@ RUN cmake -S native/deepstream -B /tmp/media-build \
 FROM ${DEEPSTREAM_IMAGE} AS deepstream
 COPY --from=deepstream-build /tmp/media-build/libmedia_worker.a /opt/smoke-detect/lib/
 COPY --from=deepstream-build /src/native/deepstream/include /opt/smoke-detect/include
-LABEL org.opencontainers.image.title="tp-smoke-detect media worker (DeepStream 9.1)" \
-      org.opencontainers.image.description="GPU media plane; target hardware qualification required"
+COPY deploy/media-entrypoint.sh /opt/smoke-detect/bin/media-entrypoint
+COPY deploy/triton-entrypoint.sh /opt/smoke-detect/bin/triton-entrypoint
+COPY deploy/deepstream/rtx3090/config.txt /etc/smoke-detect/deepstream/config.txt
+RUN chmod 0755 /opt/smoke-detect/bin/media-entrypoint /opt/smoke-detect/bin/triton-entrypoint
+ENV NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility,video \
+    SMOKE_GPU_MEDIA_CONFIG=/etc/smoke-detect/deepstream/config.txt \
+    SMOKE_GPU_MEDIA_EXECUTABLE=deepstream-app
+ENTRYPOINT ["/opt/smoke-detect/bin/media-entrypoint"]
+LABEL org.opencontainers.image.title="tp-smoke-detect media worker (DeepStream 7.0)" \
+      org.opencontainers.image.description="GPU media plane; RTX 3090 lab row; target qualification required"

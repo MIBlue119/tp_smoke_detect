@@ -39,6 +39,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve.add_argument("--config", type=Path, default=None)
     serve.add_argument("--workers", type=int, default=None)
+    serve.add_argument(
+        "--ready-file",
+        type=Path,
+        default=None,
+        help="write this file only after the broker consumer has connected",
+    )
 
     return parser
 
@@ -111,12 +117,17 @@ def main() -> int:
             settings.candidate.broker_port,
             settings.candidate.broker_keepalive_seconds,
         )
+        if args.ready_file is not None:
+            args.ready_file.parent.mkdir(parents=True, exist_ok=True)
+            args.ready_file.write_text("ready\n", encoding="utf-8")
         try:
             while consumer.ready:
                 time.sleep(1)
         except KeyboardInterrupt:
             pass
         finally:
+            if args.ready_file is not None:
+                args.ready_file.unlink(missing_ok=True)
             consumer.stop()
             repository.close()
         return 0

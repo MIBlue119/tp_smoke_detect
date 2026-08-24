@@ -32,7 +32,7 @@ services:
       SMOKE_DETECT_CAMERAS_CONFIG: /etc/smoke-detect/cameras.yaml
     ports:
       - "127.0.0.1:${SMOKE_CORE_PORT:-8000}:8000"
-    networks: [site_net]
+    networks: [site_net, gpu_net]
     volumes:
       - smoke_state:/var/lib/smoke-detect/state
       - smoke_artifacts:/var/lib/smoke-detect/artifacts
@@ -73,7 +73,7 @@ services:
       retries: 6
 
   mqtt:
-    profiles: [future-site]
+    profiles: [future-site, gpu-rtx3090]
     image: ${SMOKE_MQTT_IMAGE:-eclipse-mosquitto:2.0.20}
     restart: unless-stopped
     read_only: true
@@ -87,7 +87,7 @@ services:
       - mqtt_data:/mosquitto/data
       - mqtt_log:/mosquitto/log
     expose: [1883]
-    networks: [site_net]
+    networks: [site_net, gpu_net]
     healthcheck:
       test: [CMD-SHELL, mosquitto_sub -h 127.0.0.1 -t '$$SYS/broker/uptime' -C 1 -W 2 >/dev/null]
       interval: 10s
@@ -112,7 +112,7 @@ services:
     depends_on:
       smoke-detect:
         condition: service_healthy
-    networks: [site_net]
+    networks: [site_net, gpu_net]
     ports:
       - "127.0.0.1:${SMOKE_PROMETHEUS_PORT:-9090}:9090"
 
@@ -146,6 +146,183 @@ services:
       - /tmp:rw,noexec,nosuid,size=16m
     networks: [site_net]
 
+  gpu-preflight:
+    profiles: [gpu-rtx3090]
+    image: ${SMOKE_CORE_IMAGE:-tp-smoke-detect/core:0.1.0-cpu}
+    restart: "no"
+    entrypoint: ["python", "/app/scripts/verify_gpu_bundle.py"]
+    command: ["--pins", "/bundle/image-pins.yaml", "--manifest", "/models/manifest/model-release.json", "--one-stream-receipt", "/run/smoke-detect/gpu-readiness.json", "--receipt", "/run/smoke-detect/gpu-bundle.json"]
+    read_only: true
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - ./image-pins.yaml:/bundle/image-pins.yaml:ro
+      - ./../model-repository:/models:ro
+      - ./../docs/dev_artifacts/qualification:/run/smoke-detect:rw
+    networks: [gpu_net]
+
+  baseline-model:
+    profiles: [gpu-rtx3090]
+    image: ${SMOKE_GPU_MEDIA_IMAGE:-nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759}
+    restart: unless-stopped
+    init: true
+    entrypoint: ["/opt/smoke-detect/bin/triton-entrypoint"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${SMOKE_GPU_DEVICE:-0}
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      SMOKE_MODEL_MANIFEST: /models/manifest/model-release.json
+    volumes:
+      - ./../model-repository:/models:ro
+      - ./triton-entrypoint.sh:/opt/smoke-detect/bin/triton-entrypoint:ro
+    expose: [8000, 8001, 8002]
+    depends_on:
+      gpu-preflight:
+        condition: service_completed_successfully
+    networks: [gpu_net]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${SMOKE_GPU_DEVICE:-0}"]
+              capabilities: [gpu]
+    healthcheck:
+      test: [CMD-SHELL, wget -q -O - http://127.0.0.1:8000/v2/health/ready >/dev/null]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+
+  media-gpu:
+    profiles: [gpu-rtx3090]
+    image: ${SMOKE_GPU_MEDIA_IMAGE:-nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${SMOKE_GPU_DEVICE:-0}
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      SMOKE_MODEL_MANIFEST: /models/manifest/model-release.json
+      SMOKE_GPU_READINESS_RECEIPT: /run/smoke-detect/gpu-readiness.json
+      SMOKE_GPU_MEDIA_CONFIG: /etc/smoke-detect/deepstream/config.txt
+      SMOKE_GPU_MEDIA_EXECUTABLE: ${SMOKE_GPU_MEDIA_EXECUTABLE:-deepstream-app}
+    volumes:
+      - ./../model-repository:/models:ro
+      - ./../docs/dev_artifacts/qualification:/run/smoke-detect:ro
+      - ./deepstream/rtx3090/config.txt:/etc/smoke-detect/deepstream/config.txt:ro
+      - ${SMOKE_GPU_REPLAY_ROOT:-../tests/fixtures/media}:/media/replay:ro
+    depends_on:
+      baseline-model:
+        condition: service_healthy
+    networks: [gpu_net]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${SMOKE_GPU_DEVICE:-0}"]
+              capabilities: [gpu]
+    healthcheck:
+      test: [CMD-SHELL, kill -0 1]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+
+  candidate-consumer:
+    profiles: [gpu-rtx3090]
+    image: ${SMOKE_CORE_IMAGE:-tp-smoke-detect/core:0.1.0-cpu}
+    restart: unless-stopped
+    init: true
+    entrypoint: ["python", "-m", "tp_smoke_detect.cli"]
+    command: ["serve-candidates", "--config", "/etc/smoke-detect/runtime.yaml", "--ready-file", "/run/smoke-detect/candidate-ready"]
+    read_only: true
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m", "/run/smoke-detect:rw,noexec,nosuid,size=1m"]
+    environment:
+      SMOKE_DETECT_POLICY_CONFIG: /etc/smoke-detect/policy.yaml
+      SMOKE_DETECT_CAMERAS_CONFIG: /etc/smoke-detect/cameras.yaml
+    volumes:
+      - smoke_state:/var/lib/smoke-detect/state
+      - smoke_artifacts:/var/lib/smoke-detect/artifacts
+      - ./../configs/runtime.gpu-rtx3090.yaml:/etc/smoke-detect/runtime.yaml:ro
+      - ./../configs/policy.example.yaml:/etc/smoke-detect/policy.yaml:ro
+      - ./../configs/camera.example.yaml:/etc/smoke-detect/cameras.yaml:ro
+    depends_on:
+      smoke-detect:
+        condition: service_healthy
+      mqtt:
+        condition: service_healthy
+      media-gpu:
+        condition: service_healthy
+      baseline-model:
+        condition: service_healthy
+    networks: [gpu_net]
+    healthcheck:
+      test: [CMD-SHELL, test -r /run/smoke-detect/candidate-ready]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+  reviewer-model:
+    profiles: [gpu-vlm]
+    image: ${SMOKE_GPU_REVIEWER_IMAGE:-tp-smoke-detect/reviewer:unqualified}
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["echo 'reviewer image is not qualified; no-VLM baseline remains active' >&2; exit 78"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [gpu_net]
+
+  gpu-readiness:
+    profiles: [gpu-rtx3090]
+    image: ${SMOKE_CORE_IMAGE:-tp-smoke-detect/core:0.1.0-cpu}
+    restart: unless-stopped
+    init: true
+    entrypoint: ["python", "/app/scripts/gpu_readiness_server.py"]
+    read_only: true
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    environment:
+      SMOKE_GPU_READINESS_RECEIPT: /run/smoke-detect/gpu-readiness.json
+    volumes:
+      - ./../docs/dev_artifacts/qualification:/run/smoke-detect:ro
+    depends_on:
+      smoke-detect:
+        condition: service_healthy
+      baseline-model:
+        condition: service_healthy
+      media-gpu:
+        condition: service_healthy
+      candidate-consumer:
+        condition: service_healthy
+    expose: [8080]
+    networks: [gpu_net]
+    healthcheck:
+      test: [CMD-SHELL, wget -q -O - http://127.0.0.1:8080/health/ready >/dev/null]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
 volumes:
   postgres_data:
   mqtt_data:
@@ -156,6 +333,8 @@ volumes:
 
 networks:
   site_net:
+    internal: true
+  gpu_net:
     internal: true
 
 secrets:

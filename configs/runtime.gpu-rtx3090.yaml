@@ -1,0 +1,26 @@
+service_name: tp-smoke-detect
+environment: production
+database: /var/lib/smoke-detect/state/audit.sqlite3
+artifact_root: /var/lib/smoke-detect/artifacts
+candidate:
+  topic: track.candidate.v1
+  dead_letter_topic: track.candidate.v1.dead-letter
+  broker_host: mqtt
+  broker_port: 1883
+  broker_keepalive_seconds: 30
+  max_inflight: 32
+  retry_limit: 3
+  require_gpu_receipts: true
+policy:
+  mode: shadow
+  audio_muted: true
+  reject_on_unclear: true
+  min_persistence_ms: 2500
+  min_independent_channels: 2
+  queue_max_per_camera: 32
+  cooldown_seconds: 120
+  hourly_audio_cap: 5
+  daily_audio_cap: 25
+  policy_revision: gpu-rtx3090-shadow-r1
+  audio_message_id: smoke-reminder-neutral-01
+  audio_command_ttl_seconds: 30

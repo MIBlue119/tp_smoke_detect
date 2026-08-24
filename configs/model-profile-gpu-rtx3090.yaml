@@ -1,0 +1,30 @@
+schema_version: gpu.model-profile.v1
+profile_id: gpu-rtx3090-ds7
+runtime:
+  image_pin: deploy/image-pins.yaml:deepstream_triton_rtx3090
+  host_gpu: NVIDIA GeForce RTX 3090
+  compute_capability: "8.6"
+  host_driver_branch: "580"
+  container_cuda: "12.2"
+  tensorrt: 8.6.1.6
+  deepstream: "7.0"
+  bundled_triton: "23.10"
+model_repository:
+  manifest: /models/manifest/model-release.json
+  manifest_sha256: d4cc8d867b1479ba4e22ff5f9ff0520bbfd7a1301729ac967f59f676046ad9f6
+  read_only: true
+  model_control_mode: none
+baseline_roles:
+  - person_detector
+  - pose_landmarker
+  - hand_landmarker
+  - crop_classifier
+reviewer:
+  enabled: false
+  role: reviewer_vlm
+  reason: pending immutable artifact, license, SBOM, memory, and latency receipts
+readiness:
+  required_receipt: /run/smoke-detect/gpu-readiness.json
+  required_status: one-stream-ready
+  audio_mode: shadow
+  fail_closed_on_missing_receipt: true
