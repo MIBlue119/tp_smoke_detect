@@ -78,9 +78,15 @@ int main() {
   CHECK(!worker.ingest("missing", frame(), t0));
   DeepStreamPipeline pipeline;
   CHECK(!pipeline.available());
+  CHECK(pipeline.graph_description().find("nvstreammux") != std::string::npos);
+  CHECK(pipeline.graph_description().find("nvinferserver") != std::string::npos);
+  CHECK(pipeline.add_source({"cam-b", "file:///bundle/replay.mp4", "camera-r1", 0}));
+  CHECK(!pipeline.add_source({"cam-b", "rtsp://example.invalid/duplicate", "camera-r1", 1}));
+  CHECK(!pipeline.add_source({"cam-c", "https://example.invalid/not-camera", "camera-r1", 2}));
+  CHECK(pipeline.camera_health().size() == 1);
   std::string error;
   CHECK(!pipeline.start(&error));
-  CHECK(error.find("reference profile") != std::string::npos);
+  CHECK(error.find("DeepStream SDK is unavailable") != std::string::npos);
   CandidatePublisher publisher(2);
   CHECK(publisher.enqueue(*candidate));
   CHECK(publisher.enqueue(*candidate));

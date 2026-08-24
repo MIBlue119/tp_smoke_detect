@@ -1,0 +1,10 @@
+# NvDCF configuration shape. The DeepStream adapter binds this file through
+# nvtracker's ll-config-file property; exact tracker settings are qualified
+# with the target stream pack.
+[tracker]
+tracker-width=960
+tracker-height=544
+ll-lib-file=/opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so
+enable-batch-process=1
+enable-past-frame=0
+display-tracking-id=1
