@@ -2,13 +2,84 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
+#include <stdexcept>
 #include <string>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <thread>
+#include <unordered_map>
+#include <unistd.h>
+#include <vector>
 
 using namespace tp_smoke_detect::media;
 
 namespace {
+
+std::string trim(std::string value) {
+  const auto first = value.find_first_not_of(" \t\r\n");
+  if (first == std::string::npos) return {};
+  const auto last = value.find_last_not_of(" \t\r\n");
+  value = value.substr(first, last - first + 1);
+  if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+    value = value.substr(1, value.size() - 2);
+  }
+  return value;
+}
+
+std::unordered_map<std::string, std::string> read_config(const std::string& path) {
+  std::ifstream input(path);
+  if (!input) throw std::runtime_error("cannot read media config: " + path);
+  std::unordered_map<std::string, std::string> values;
+  std::string line;
+  while (std::getline(input, line)) {
+    const auto comment = line.find('#');
+    if (comment != std::string::npos) line.resize(comment);
+    const auto delimiter = line.find(':');
+    if (delimiter == std::string::npos) continue;
+    auto key = trim(line.substr(0, delimiter));
+    auto value = trim(line.substr(delimiter + 1));
+    if (!key.empty() && !value.empty()) values[key] = value;
+  }
+  return values;
+}
+
+std::string required(const std::unordered_map<std::string, std::string>& values,
+                     const std::string& key) {
+  const auto found = values.find(key);
+  if (found == values.end() || found->second.empty() || found->second == "unresolved" ||
+      found->second == "unknown") {
+    throw std::runtime_error("media config requires bound " + key);
+  }
+  return found->second;
+}
+
+std::string value_or(const std::unordered_map<std::string, std::string>& values,
+                     const std::string& key, const std::string& fallback) {
+  const auto found = values.find(key);
+  return found == values.end() ? fallback : found->second;
+}
+
+bool publish_qos1(const std::string& host, const std::string& port, const std::string& topic,
+                  const std::string& payload) {
+  std::vector<std::string> arguments = {"mosquitto_pub", "-h", host, "-p", port, "-t", topic,
+                                        "-q", "1", "-m", payload};
+  std::vector<char*> argv;
+  argv.reserve(arguments.size() + 1);
+  for (auto& argument : arguments) argv.push_back(argument.data());
+  argv.push_back(nullptr);
+  const pid_t child = fork();
+  if (child < 0) return false;
+  if (child == 0) {
+    execvp(argv[0], argv.data());
+    _exit(127);
+  }
+  int status = 0;
+  if (waitpid(child, &status, 0) < 0) return false;
+  return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
 int reference_once() {
   MediaWorker worker;
   if (!worker.add_camera(CameraConfig{"camera-reference", "camera-r1"})) return 78;
@@ -19,35 +90,61 @@ int reference_once() {
   std::cout << candidate->to_json() << '\n';
   return 0;
 }
+
+DeepStreamPipelineConfig pipeline_config(const std::unordered_map<std::string, std::string>& values) {
+  DeepStreamPipelineConfig config;
+  config.detector_config = required(values, "detector_config");
+  config.tracker_config = required(values, "tracker_config");
+  config.pose_model_path = required(values, "pose_model_path");
+  config.hand_model_path = required(values, "hand_model_path");
+  config.crop_infer_config = required(values, "crop_infer_config");
+  config.artifact_revision = required(values, "artifact_revision");
+  const auto manifest = required(values, "manifest_revision");
+  config.detector_model_revision = value_or(values, "detector_model_revision", manifest + ":person_detector");
+  config.pose_model_revision = value_or(values, "pose_model_revision", manifest + ":pose_landmarker");
+  config.hand_model_revision = value_or(values, "hand_model_revision", manifest + ":hand_landmarker");
+  config.crop_model_revision = value_or(values, "crop_model_revision", manifest + ":crop_classifier");
+  config.sources.push_back(DeepStreamSourceConfig{
+      .camera_id = required(values, "camera_id"),
+      .uri = required(values, "source_uri"),
+      .camera_config_revision = required(values, "camera_config_revision"),
+      .source_id = 0,
+  });
+  return config;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   if (argc > 1 && std::string(argv[1]) == "--reference") return reference_once();
-
-  DeepStreamPipelineConfig config;
-  config.detector_config = "/opt/smoke-detect/deepstream/config/peoplenet-transformer.txt";
-  config.tracker_config = "/opt/smoke-detect/deepstream/config/nvdcf.txt";
-  config.pose_model_path = "/models/mediapipe-pose-landmarker/pose_landmarker.task";
-  config.hand_model_path = "/models/mediapipe-hand-landmarker/hand_landmarker.task";
-  config.crop_infer_config = "/opt/smoke-detect/deepstream/config/siglip2-crop-nvinferserver.pbtxt";
-  config.sources.push_back(DeepStreamSourceConfig{
-      .camera_id = std::getenv("SMOKE_GPU_CAMERA_ID") ? std::getenv("SMOKE_GPU_CAMERA_ID")
-                                                       : "camera-gpu-01",
-      .uri = std::getenv("SMOKE_GPU_SOURCE_URI") ? std::getenv("SMOKE_GPU_SOURCE_URI")
-                                                  : "file:///media/replay/stream-01.mp4",
-      .camera_config_revision = "gpu-runtime-r1",
-      .source_id = 0,
-  });
-  DeepStreamPipeline pipeline(config);
-  pipeline.set_candidate_callback([](const CandidateEnvelope& candidate) {
-    std::cout << candidate.to_json() << std::endl;
-    return true;
-  });
-  std::string error;
-  if (!pipeline.start(&error)) {
-    std::cerr << error << '\n';
+  if (argc != 3 || std::string(argv[1]) != "--config") {
+    std::cerr << "usage: media_publisher --config <bound-runtime-config>\n";
     return 78;
   }
-  while (pipeline.running()) std::this_thread::sleep_for(std::chrono::seconds(1));
-  return 0;
+  try {
+    const auto values = read_config(argv[2]);
+    auto config = pipeline_config(values);
+    const auto host = value_or(values, "broker_host", "127.0.0.1");
+    const auto port = value_or(values, "broker_port", "1883");
+    const auto topic = required(values, "candidate_topic");
+    DeepStreamPipeline pipeline(std::move(config));
+    pipeline.set_candidate_callback([&](const CandidateEnvelope& candidate) {
+      const auto payload = candidate.to_json();
+      const bool delivered = publish_qos1(host, port, topic, payload);
+      if (!delivered) {
+        std::cerr << "MQTT QoS1 publication failed for event " << candidate.event_id << '\n';
+      }
+      return delivered;
+    });
+    std::string error;
+    if (!pipeline.start(&error)) {
+      std::cerr << error << '\n';
+      return 78;
+    }
+    while (pipeline.running()) std::this_thread::sleep_for(std::chrono::seconds(1));
+    return 0;
+  } catch (const std::exception& error) {
+    std::cerr << error.what() << '\n';
+    return 78;
+  }
 }

@@ -30,6 +30,13 @@ struct DeepStreamPipelineConfig {
   std::string pose_model_path{"model-repository/mediapipe-pose-landmarker/pose_landmarker.task"};
   std::string hand_model_path{"model-repository/mediapipe-hand-landmarker/hand_landmarker.task"};
   std::string crop_infer_config{"native/deepstream/config/siglip2-crop-nvinferserver.pbtxt"};
+  // These revisions are read from the active deployment manifest. An
+  // unresolved value is rejected before the graph can publish candidates.
+  std::string detector_model_revision;
+  std::string pose_model_revision;
+  std::string hand_model_revision;
+  std::string crop_model_revision;
+  std::string artifact_revision;
   std::size_t max_pending_candidates{128};
   std::vector<DeepStreamSourceConfig> sources;
 };

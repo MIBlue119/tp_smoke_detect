@@ -23,11 +23,13 @@ import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from math import ceil
 from pathlib import Path
 from typing import Any
 
 import yaml
 from ml.registry.model_repository import ModelRepositoryManifest, verify_local_artifact
+from scripts.gpu_receipts import build_one_stream_receipt
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_IMAGE = (
@@ -51,6 +53,9 @@ TELEMETRY_FIELDS = {
     "memory_used_mib",
     "analysis_fps",
     "camera_id",
+    "model_revision",
+    "runtime_identity",
+    "fault_isolation",
 }
 
 
@@ -302,6 +307,14 @@ def replay_probe(
     result: dict[str, Any] = {"path": str(path), "status": "blocked", "manifest_sha256": None}
     errors: list[str] = []
     try:
+        if media_root is None:
+            errors.append("media_root is required for every real qualification replay")
+            media_root = Path("__missing-approved-media-root__")
+        approved_root = media_root.resolve()
+        result["media_root_policy"] = {
+            "required": True,
+            "root_sha256": hashlib.sha256(str(approved_root).encode()).hexdigest(),
+        }
         raw = path.read_bytes()
         data = yaml.safe_load(raw) or {}
         result["manifest_sha256"] = hashlib.sha256(raw).hexdigest()
@@ -330,18 +343,16 @@ def replay_probe(
                 errors.append(f"{stream_id}: source_path is missing")
             else:
                 source_path = Path(str(source))
-                if media_root is not None:
-                    if source_path.is_absolute():
-                        errors.append(f"{stream_id}: source_path must be relative to media root")
-                        source_path = media_root / "__invalid__"
-                    else:
-                        root = media_root.resolve()
-                        source_path = (root / source_path).resolve()
-                        try:
-                            source_path.relative_to(root)
-                        except ValueError:
-                            errors.append(f"{stream_id}: source_path escapes media root")
-                            source_path = root / "__invalid__"
+                if source_path.is_absolute():
+                    errors.append(f"{stream_id}: source_path must be relative to media root")
+                    source_path = approved_root / "__invalid__"
+                else:
+                    source_path = (approved_root / source_path).resolve()
+                    try:
+                        source_path.relative_to(approved_root)
+                    except ValueError:
+                        errors.append(f"{stream_id}: source_path escapes media root")
+                        source_path = approved_root / "__invalid__"
                 if not source_path.is_file():
                     errors.append(f"{stream_id}: local source_path is not readable")
                 else:
@@ -378,9 +389,48 @@ def parse_telemetry(lines: Iterable[str]) -> dict[str, Any]:
                 "max": max(values),
                 "avg": sum(values) / len(values),
             }
+    for field in ("runtime_identity",):
+        values = [str(row[field]).strip() for row in rows if str(row.get(field, "")).strip()]
+        if values:
+            summary[field] = values[-1]
+    isolation = next(
+        (
+            row.get("fault_isolation")
+            for row in rows
+            if isinstance(row.get("fault_isolation"), dict)
+        ),
+        None,
+    )
+    if isolation is not None:
+        summary["fault_isolation"] = isolation
     camera_ids = {str(row["camera_id"]) for row in rows if row.get("camera_id")}
     if camera_ids:
         summary["camera_count"] = len(camera_ids)
+    per_camera: dict[str, dict[str, Any]] = {}
+    for camera_id in sorted(camera_ids):
+        camera_rows = [row for row in rows if str(row.get("camera_id")) == camera_id]
+        camera_summary: dict[str, Any] = {
+            "samples": len(camera_rows),
+            "fields": sorted({key for row in camera_rows for key in row}),
+        }
+        for field in sorted(TELEMETRY_FIELDS):
+            values = [
+                float(row[field]) for row in camera_rows if isinstance(row.get(field), (int, float))
+            ]
+            if values:
+                camera_summary[field] = {
+                    "min": min(values),
+                    "max": max(values),
+                    "avg": sum(values) / len(values),
+                }
+        for field in ("model_revision", "runtime_identity"):
+            values = [
+                str(row[field]).strip() for row in camera_rows if str(row.get(field, "")).strip()
+            ]
+            if values:
+                camera_summary[field] = {"min": values[0], "max": values[-1]}
+        per_camera[camera_id] = camera_summary
+    summary["cameras"] = per_camera
     latency_values = [
         float(row["candidate_latency_ms"])
         for row in rows
@@ -395,12 +445,25 @@ def parse_telemetry(lines: Iterable[str]) -> dict[str, Any]:
 
 
 def evaluate_telemetry(
-    metrics: dict[str, Any], *, streams: int, duration_seconds: float, analysis_fps: float
+    metrics: dict[str, Any],
+    *,
+    streams: int,
+    duration_seconds: float,
+    analysis_fps: float,
+    required_duration_seconds: float = 0.0,
+    sample_interval: float = 1.0,
 ) -> list[str]:
     """Evaluate measured values, not merely telemetry field names."""
 
     errors: list[str] = []
-    required = {"scheduled_samples", "processed_samples", "dropped_samples", "candidate_latency_ms"}
+    required = {
+        "scheduled_samples",
+        "processed_samples",
+        "dropped_samples",
+        "queue_depth",
+        "queue_age_ms",
+        "candidate_latency_ms",
+    }
     missing = sorted(required - set(metrics.get("fields", [])))
     if missing:
         errors.append(f"real runtime telemetry is incomplete: missing {', '.join(missing)}")
@@ -421,19 +484,58 @@ def evaluate_telemetry(
             errors.append("dropped sample ratio exceeds 1%")
     if metrics.get("candidate_latency_p95_ms", float("inf")) > 8000:
         errors.append("candidate-to-decision p95 latency exceeds 8000ms")
-    if metrics.get("queue_depth", {}).get("max", 0) > 1024:
+    if metrics.get("queue_depth", {}).get("max", float("inf")) > 1024:
         errors.append("queue depth is unbounded above the 1024-sample qualification limit")
-    if metrics.get("queue_age_ms", {}).get("max", 0) > 8000:
+    if metrics.get("queue_age_ms", {}).get("max", float("inf")) > 8000:
         errors.append("queue age exceeds the 8000ms qualification limit")
-    if streams > 1 and metrics.get("camera_count", 0) < streams:
+    if metrics.get("camera_count", 0) != streams:
         errors.append(f"telemetry covers fewer than requested cameras: {streams}")
+    cameras = metrics.get("cameras")
+    if not isinstance(cameras, dict) or len(cameras) != streams:
+        errors.append("per-camera telemetry rows are missing")
+    required_samples = max(2, ceil(required_duration_seconds / max(sample_interval, 0.1)))
+    if required_duration_seconds > 0 and duration_seconds + 0.5 < required_duration_seconds:
+        errors.append("runtime duration is shorter than the requested qualification duration")
+    for camera_id, camera in (cameras or {}).items():
+        fields = set(camera.get("fields", []))
+        missing_camera = sorted(
+            (
+                required
+                | {
+                    "analysis_fps",
+                    "gpu_utilization",
+                    "nvdec_utilization",
+                    "model_revision",
+                    "runtime_identity",
+                }
+            )
+            - fields
+        )
+        if missing_camera:
+            errors.append(
+                f"{camera_id}: per-camera telemetry is incomplete: {', '.join(missing_camera)}"
+            )
+        if camera.get("samples", 0) < required_samples:
+            errors.append(f"{camera_id}: telemetry sample count is below {required_samples}")
+        fps = camera.get("analysis_fps", {}).get("min", -1)
+        if not isinstance(fps, (int, float)) or fps < analysis_fps:
+            errors.append(f"{camera_id}: per-camera analysis FPS is below requested {analysis_fps}")
+        for field in ("gpu_utilization", "nvdec_utilization"):
+            value = camera.get(field, {}).get("min", -1)
+            if not isinstance(value, (int, float)) or value <= 0:
+                errors.append(f"{camera_id}: measured {field} is absent or zero")
+        if not str(camera.get("model_revision", {}).get("min", "")).strip():
+            errors.append(f"{camera_id}: model role identity is missing")
+        if not str(camera.get("runtime_identity", {}).get("min", "")).strip():
+            errors.append(f"{camera_id}: runtime identity is missing")
     if (
-        analysis_fps > 0
-        and "analysis_fps" in metrics
-        and metrics["analysis_fps"]["min"] < analysis_fps
+        not isinstance(metrics.get("fault_isolation"), dict)
+        or metrics["fault_isolation"].get("status") != "passed"
     ):
-        errors.append(f"per-camera analysis FPS is below requested {analysis_fps}")
-    if duration_seconds < 0:
+        errors.append("fault-isolation receipt is required and must pass")
+    if not str(metrics.get("runtime_identity", "")).strip():
+        errors.append("runtime identity is required")
+    if duration_seconds < 0 or required_duration_seconds < 0:
         errors.append("runtime duration is invalid")
     return errors
 
@@ -507,6 +609,16 @@ def run_runtime(
     metrics = parse_telemetry(output)
     if gpu_samples:
         metrics["gpu_samples"] = gpu_samples
+        metrics["gpu_utilization"] = {
+            "min": min(row["gpu_utilization"] for row in gpu_samples),
+            "max": max(row["gpu_utilization"] for row in gpu_samples),
+            "avg": sum(row["gpu_utilization"] for row in gpu_samples) / len(gpu_samples),
+        }
+        metrics["nvdec_utilization"] = {
+            "min": min(row["nvdec_utilization"] for row in gpu_samples),
+            "max": max(row["nvdec_utilization"] for row in gpu_samples),
+            "avg": sum(row["nvdec_utilization"] for row in gpu_samples) / len(gpu_samples),
+        }
     return result, metrics
 
 
@@ -555,6 +667,8 @@ def build_receipt(args: argparse.Namespace) -> tuple[dict[str, Any], list[Comman
                     streams=args.streams,
                     duration_seconds=result.duration_seconds,
                     analysis_fps=args.analysis_fps,
+                    required_duration_seconds=args.duration_hours * 3600,
+                    sample_interval=args.sample_interval,
                 )
             )
     elif args.real_runtime:
@@ -627,6 +741,25 @@ def build_receipt(args: argparse.Namespace) -> tuple[dict[str, Any], list[Comman
             ),
         ],
     }
+    runtime_identity = runtime.get("metrics", {}).get("runtime_identity")
+    host_raw = str(host.get("gpu", {}).get("raw", ""))
+    host_fields = [item.strip() for item in host_raw.split(",")]
+    host["identity"] = {
+        "gpu": host_fields[0] if len(host_fields) > 0 else "",
+        "driver": host_fields[2] if len(host_fields) > 2 else "",
+        "compute_capability": host_fields[1] if len(host_fields) > 1 else "",
+    }
+    image_value = str(image.get("image", ""))
+    image["digest"] = image_value.split("@sha256:")[-1] if "@sha256:" in image_value else ""
+    if isinstance(runtime_identity, str) and runtime_identity:
+        runtime["identity"] = {
+            "runtime": runtime_identity,
+            "deepstream": runtime_identity,
+            "tensorrt": runtime_identity,
+            "triton": runtime_identity,
+        }
+    if status == "qualified" and args.streams == 1:
+        receipt["one_stream"] = build_one_stream_receipt(receipt)
     return receipt, all_commands
 
 
@@ -720,7 +853,7 @@ def main() -> int:
     parser.add_argument("--markdown-output", type=Path)
     args = parser.parse_args()
     if args.duration_hours <= 0:
-        args.duration_hours = 2.0 if args.streams == 20 else 0.0
+        args.duration_hours = 2.0 if args.streams == 20 else 1.0
     receipt, _ = build_receipt(args)
     rendered = json.dumps(receipt, indent=2, sort_keys=True) + "\n"
     if args.output:

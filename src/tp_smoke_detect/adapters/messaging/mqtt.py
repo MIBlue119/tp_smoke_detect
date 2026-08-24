@@ -212,7 +212,9 @@ class MqttCandidateConsumer:
                 self.health.set_component("candidate-broker", HealthState.HEALTHY)
 
         def on_message(_client: Any, _userdata: Any, message: Any) -> None:
-            ack = getattr(message, "ack", lambda: None)
+            def ack() -> None:
+                self._ack_message(message)
+
             attempts = self._message_attempts(message)
             delivery = MqttDelivery(
                 payload=message.payload,
@@ -236,14 +238,15 @@ class MqttCandidateConsumer:
         if not callable(publish):
             return
         properties = self._with_attempt(getattr(message, "properties", None), attempt)
+        if properties is None:
+            logger.error("cannot persist MQTT retry attempt without MQTT v5 properties")
+            return
         result = publish(
             self.config.topic, message.payload, qos=1, retain=False, properties=properties
         )
         if not self._publish_succeeded(result):
             return
-        ack = getattr(message, "ack", None)
-        if callable(ack):
-            ack()
+        self._ack_message(message)
 
     @staticmethod
     def _publish_succeeded(result: Any) -> bool:
@@ -268,7 +271,13 @@ class MqttCandidateConsumer:
     @staticmethod
     def _with_attempt(properties: Any, attempt: int) -> Any:
         if properties is None:
-            return properties
+            try:
+                from paho.mqtt.packettypes import PacketTypes
+                from paho.mqtt.properties import Properties
+
+                properties = Properties(PacketTypes.PUBLISH)  # type: ignore[no-untyped-call]
+            except (ImportError, TypeError, ValueError):
+                return None
         cloned = copy(properties)
         user_properties = [
             (str(key), str(value))
@@ -279,8 +288,19 @@ class MqttCandidateConsumer:
         try:
             cloned.UserProperty = user_properties
         except (AttributeError, TypeError):
-            return properties
+            return None
         return cloned
+
+    def _ack_message(self, message: Any) -> None:
+        """Acknowledge through Paho's client API after durable completion."""
+
+        if self.client is None:
+            return
+        ack = getattr(self.client, "ack", None)
+        if not callable(ack):
+            logger.error("MQTT client does not expose manual acknowledgement API")
+            return
+        ack(int(message.mid), int(getattr(message, "qos", 1)))
 
     def _dead_letter(self, message: Any, reason: str) -> None:
         publish = getattr(self.client, "publish", None)
@@ -301,9 +321,7 @@ class MqttCandidateConsumer:
         result = publish(self.config.dead_letter_topic, payload, qos=1, retain=False)
         if not self._publish_succeeded(result):
             return
-        ack = getattr(message, "ack", None)
-        if callable(ack):
-            ack()
+        self._ack_message(message)
 
 
 __all__ = ["MqttCandidateConsumer", "MqttConsumerConfig", "MqttDelivery"]

@@ -122,6 +122,18 @@ bool DeepStreamPipeline::validate_config(std::string* error) const {
       config_.crop_infer_config.empty()) {
     return fail("detector, tracker, pose, hand, and crop inference configuration are required");
   }
+  const std::vector<std::pair<const char*, const std::string*>> revisions = {
+      {"detector model revision", &config_.detector_model_revision},
+      {"pose model revision", &config_.pose_model_revision},
+      {"hand model revision", &config_.hand_model_revision},
+      {"crop model revision", &config_.crop_model_revision},
+      {"artifact revision", &config_.artifact_revision},
+  };
+  for (const auto& [label, revision] : revisions) {
+    if (revision->empty() || *revision == "unresolved" || *revision == "unknown") {
+      return fail(std::string(label) + " must be bound to the active manifest");
+    }
+  }
   return true;
 }
 
@@ -245,7 +257,10 @@ void DeepStreamPipeline::on_metadata_buffer(void* opaque_buffer) {
       auto candidate = worker_.candidate(source->config.camera_id, sample, Clock::now());
       if (!candidate.has_value()) continue;
       candidate->producer = "tp-smoke-detect.deepstream7";
-      candidate->stage = "candidate";
+      // This probe is installed after the complete detector -> tracker ->
+      // pose -> hands -> crop graph. Missing role output is represented as an
+      // unavailable receipt; it is never mislabeled as successful evidence.
+      candidate->stage = "completed";
       candidate->quality.eligible = width > 0 && height > 0 && object->confidence > 0.0;
       candidate->quality.eligibility_reason = candidate->quality.eligible
                                                   ? "gpu_quality_gate_pending_role_receipts"
@@ -257,12 +272,39 @@ void DeepStreamPipeline::on_metadata_buffer(void* opaque_buffer) {
                            .reason_code = "none",
                            .request_id = candidate->event_id,
                            .correlation_id = candidate->correlation_id,
-                           .model_revision = "peoplenet-transformer:unresolved",
-                           .artifact_revision = "bundle:unresolved",
+                           .model_revision = config_.detector_model_revision,
+                           .artifact_revision = config_.artifact_revision,
                            .output_schema = "detector.v1",
                            .deadline_outcome = "met"},
+          InferenceReceipt{.role = "pose",
+                           .status = "unavailable",
+                           .reason_code = "not_ready",
+                           .request_id = candidate->event_id,
+                           .correlation_id = candidate->correlation_id,
+                           .model_revision = config_.pose_model_revision,
+                           .artifact_revision = config_.artifact_revision,
+                           .output_schema = "none",
+                           .deadline_outcome = "not_applicable"},
+          InferenceReceipt{.role = "object",
+                           .status = "unavailable",
+                           .reason_code = "not_ready",
+                           .request_id = candidate->event_id,
+                           .correlation_id = candidate->correlation_id,
+                           .model_revision = config_.hand_model_revision,
+                           .artifact_revision = config_.artifact_revision,
+                           .output_schema = "none",
+                           .deadline_outcome = "not_applicable"},
+          InferenceReceipt{.role = "smoke",
+                           .status = "unavailable",
+                           .reason_code = "not_ready",
+                           .request_id = candidate->event_id,
+                           .correlation_id = candidate->correlation_id,
+                           .model_revision = config_.crop_model_revision,
+                           .artifact_revision = config_.artifact_revision,
+                           .output_schema = "none",
+                           .deadline_outcome = "not_applicable"},
       };
-      candidate->model_revisions = {{"detector", "peoplenet-transformer:unresolved"}};
+      candidate->model_revisions = {{"detector", config_.detector_model_revision}};
       publisher_.enqueue(*candidate);
       if (candidate_callback_) publisher_.flush(candidate_callback_);
     }
@@ -429,16 +471,16 @@ bool DeepStreamPipeline::start(std::string* error) {
   for (auto& source : runtime_->sources) {
     g_signal_connect(source.element, "pad-added", G_CALLBACK(source_pad_added), this);
   }
-  GstPad* tracker_src = gst_element_get_static_pad(runtime_->tracker, "src");
-  if (tracker_src == nullptr) {
-    set_failure("unqualified: tracker metadata pad is unavailable");
+  GstPad* crop_src = gst_element_get_static_pad(crop, "src");
+  if (crop_src == nullptr) {
+    set_failure("unqualified: completed crop metadata pad is unavailable");
     if (error != nullptr) *error = readiness_.reason;
     stop();
     return false;
   }
-  runtime_->metadata_probe = gst_pad_add_probe(tracker_src, GST_PAD_PROBE_TYPE_BUFFER,
+  runtime_->metadata_probe = gst_pad_add_probe(crop_src, GST_PAD_PROBE_TYPE_BUFFER,
                                                 metadata_probe, this, nullptr);
-  gst_object_unref(tracker_src);
+  gst_object_unref(crop_src);
   runtime_->bus = gst_element_get_bus(runtime_->pipeline);
   gst_bus_set_sync_handler(runtime_->bus, bus_sync, this, nullptr);
   const GstStateChangeReturn state = gst_element_set_state(runtime_->pipeline, GST_STATE_PLAYING);

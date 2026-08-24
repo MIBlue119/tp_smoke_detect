@@ -98,7 +98,11 @@ def main() -> int:
             raise SystemExit(
                 "serve-candidates requires the optional GPU MQTT dependency: paho-mqtt"
             ) from exc
-        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, manual_ack=True)
+        client = mqtt.Client(
+            mqtt.CallbackAPIVersion.VERSION2,
+            protocol=mqtt.MQTTv5,
+            manual_ack=True,
+        )
         consumer = MqttCandidateConsumer(
             service,
             config=MqttConsumerConfig(
