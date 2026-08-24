@@ -315,9 +315,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     write_receipt(media_receipt_path, media_receipt)
     # The review is immutable companion evidence.  It is copied only after
     # the output hash exists, so the final manifest can bind all three files.
-    if os.environ.get("DEMO_PREPARE_REVIEW") != "1" and review_payload["pre_final_annotation_sha256"] != sha256_file(annotation_path):
+    if os.environ.get("DEMO_PREPARE_REVIEW") != "1" and review_payload[
+        "pre_final_annotation_sha256"
+    ] != sha256_file(annotation_path):
         raise RuntimeError("manual review annotation claim does not match pre-final evidence")
-    if os.environ.get("DEMO_PREPARE_REVIEW") != "1" and review_payload["rendered_video_sha256"] != media_receipt.output_sha256:
+    if (
+        os.environ.get("DEMO_PREPARE_REVIEW") != "1"
+        and review_payload["rendered_video_sha256"] != media_receipt.output_sha256
+    ):
         raise RuntimeError("manual review video claim does not match rendered output")
     review_path = output_root / "manual-review.json"
     review_path.write_bytes(args.manual_review.read_bytes())

@@ -7,8 +7,8 @@ import hashlib
 import json
 import os
 import platform
-import sys
 import shutil
+import sys
 from pathlib import Path
 
 
@@ -29,7 +29,15 @@ def main() -> int:
     if any(
         token in key.lower()
         for key in os.environ
-        for token in ("secret", "token", "password", "credential", "cookie", "api_key", "access_key")
+        for token in (
+            "secret",
+            "token",
+            "password",
+            "credential",
+            "cookie",
+            "api_key",
+            "access_key",
+        )
     ):
         raise SystemExit("sensitive environment variable crossed checkpoint boundary")
     args.output.mkdir(parents=True, exist_ok=True)
@@ -48,7 +56,14 @@ def main() -> int:
         value = torch.load(path, map_location="cpu", weights_only=False)
         keys = sorted(value.keys()) if isinstance(value, dict) else []
         checkpoint_sha = digest(path)
-        loaded.append({"input": path.name, "sha256": checkpoint_sha, "loaded": True, "top_level_keys": keys[:32]})
+        loaded.append(
+            {
+                "input": path.name,
+                "sha256": checkpoint_sha,
+                "loaded": True,
+                "top_level_keys": keys[:32],
+            }
+        )
         role = "person_pose" if "pose" in path.name else "cigarette_detector"
         # Export happens in the boundary while the pickle is still present;
         # host inference receives only this ONNX artifact afterwards.
@@ -57,10 +72,21 @@ def main() -> int:
         tmp_path = Path("/tmp") / path.name
         shutil.copyfile(path, tmp_path)
         model = YOLO(str(tmp_path))
-        exported = Path(str(model.export(format="onnx", imgsz=640, half=False, device="cpu", simplify=False)))
+        exported = Path(
+            str(model.export(format="onnx", imgsz=640, half=False, device="cpu", simplify=False))
+        )
         safe_path = args.output / f"{role}.onnx"
         shutil.copyfile(exported, safe_path)
-        safe_artifacts.append({"role": role, "artifact_id": safe_path.name, "sha256": digest(safe_path), "size_bytes": safe_path.stat().st_size, "format": "onnx", "source_checkpoint_sha256": checkpoint_sha})
+        safe_artifacts.append(
+            {
+                "role": role,
+                "artifact_id": safe_path.name,
+                "sha256": digest(safe_path),
+                "size_bytes": safe_path.stat().st_size,
+                "format": "onnx",
+                "source_checkpoint_sha256": checkpoint_sha,
+            }
+        )
     receipt = {
         "schema_version": "demo.checkpoint-boundary.v1",
         "status": "passed",

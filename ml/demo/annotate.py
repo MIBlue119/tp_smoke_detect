@@ -266,9 +266,19 @@ def _draw_frame(
     draw.rectangle((0, 0, width, 96), fill=(0, 0, 0, 215))
     draw.text((8, 5), BANNER, fill=(255, 235, 80), font=_font(18))
     draw.text((8, 27), f"run_id={run_id}", fill=(240, 240, 240), font=_font(11))
-    draw.text((8, 42), f"frame={frame_index} {timestamp} | GPU {runtime.get('device_name', 'unknown')}", fill=(240, 240, 240), font=_font(11))
+    draw.text(
+        (8, 42),
+        f"frame={frame_index} {timestamp} | GPU {runtime.get('device_name', 'unknown')}",
+        fill=(240, 240, 240),
+        font=_font(11),
+    )
     for index, item in enumerate(models):
-        draw.text((8, 57 + index * 14), f"{item.get('role', 'unknown')} revision={item.get('model_revision', 'unknown')}", fill=(220, 220, 220), font=_font(10))
+        draw.text(
+            (8, 57 + index * 14),
+            f"{item.get('role', 'unknown')} revision={item.get('model_revision', 'unknown')}",
+            fill=(220, 220, 220),
+            font=_font(10),
+        )
     # Keep the overlay readable on crowded frames.  Candidate/unclear entries
     # win over low-value unmatched boxes; every omitted item remains in the
     # immutable JSON evidence.
