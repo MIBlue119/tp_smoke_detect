@@ -44,6 +44,168 @@
       "title": "BoundingBox",
       "type": "object"
     },
+    "CandidateInferenceReason": {
+      "description": "Operator-safe reason codes for a role receipt.",
+      "enum": [
+        "none",
+        "not_ready",
+        "timeout",
+        "queue_expired",
+        "unavailable",
+        "malformed_output",
+        "revision_mismatch",
+        "deadline_expired",
+        "gpu_out_of_memory",
+        "provider_error"
+      ],
+      "title": "CandidateInferenceReason",
+      "type": "string"
+    },
+    "CandidateInferenceReceipt": {
+      "additionalProperties": false,
+      "description": "Pixels-free receipt for one GPU inference role.",
+      "properties": {
+        "artifact_revision": {
+          "default": "unknown",
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Artifact Revision",
+          "type": "string"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "deadline_outcome": {
+          "$ref": "#/$defs/DeadlineOutcome",
+          "default": "not_applicable"
+        },
+        "model_revision": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Model Revision",
+          "type": "string"
+        },
+        "output_schema": {
+          "$ref": "#/$defs/CandidateOutputSchema",
+          "default": "none"
+        },
+        "reason_code": {
+          "$ref": "#/$defs/CandidateInferenceReason",
+          "default": "none"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "reviewer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InferenceReviewerEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "role": {
+          "$ref": "#/$defs/CandidateInferenceRole"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "status": {
+          "$ref": "#/$defs/CandidateInferenceStatus"
+        }
+      },
+      "required": [
+        "role",
+        "status",
+        "model_revision"
+      ],
+      "title": "CandidateInferenceReceipt",
+      "type": "object"
+    },
+    "CandidateInferenceRole": {
+      "description": "Stable evidence roles emitted by the GPU media plane.",
+      "enum": [
+        "detector",
+        "pose",
+        "object",
+        "smoke",
+        "temporal",
+        "reviewer"
+      ],
+      "title": "CandidateInferenceRole",
+      "type": "string"
+    },
+    "CandidateInferenceStatus": {
+      "description": "Bounded receipt states; only ``ok`` can contribute evidence.",
+      "enum": [
+        "ok",
+        "unavailable",
+        "timeout",
+        "malformed",
+        "invalid",
+        "revision_mismatch",
+        "error",
+        "unclear"
+      ],
+      "title": "CandidateInferenceStatus",
+      "type": "string"
+    },
+    "CandidateOutputSchema": {
+      "enum": [
+        "none",
+        "detector.v1",
+        "pose.v1",
+        "object.v1",
+        "smoke.v1",
+        "temporal.v1",
+        "reviewer.v1"
+      ],
+      "title": "CandidateOutputSchema",
+      "type": "string"
+    },
+    "DeadlineOutcome": {
+      "enum": [
+        "met",
+        "expired",
+        "not_applicable"
+      ],
+      "title": "DeadlineOutcome",
+      "type": "string"
+    },
     "Geometry": {
       "additionalProperties": false,
       "properties": {
@@ -74,6 +236,31 @@
         "person_box"
       ],
       "title": "Geometry",
+      "type": "object"
+    },
+    "InferenceReviewerEvidence": {
+      "additionalProperties": false,
+      "description": "Constrained reviewer output; model prose never crosses the boundary.",
+      "properties": {
+        "label": {
+          "$ref": "#/$defs/ReviewerLabel"
+        },
+        "reason_code": {
+          "$ref": "#/$defs/ReviewerReasonCode"
+        },
+        "score": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Score",
+          "type": "number"
+        }
+      },
+      "required": [
+        "label",
+        "score",
+        "reason_code"
+      ],
+      "title": "InferenceReviewerEvidence",
       "type": "object"
     },
     "ObjectObservation": {
@@ -129,6 +316,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/PoseObservation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reviewer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InferenceReviewerEvidence"
             },
             {
               "type": "null"
@@ -257,6 +455,24 @@
       ],
       "title": "Quality",
       "type": "object"
+    },
+    "ReviewerLabel": {
+      "enum": [
+        "smoking",
+        "not_smoking",
+        "unclear"
+      ],
+      "title": "ReviewerLabel",
+      "type": "string"
+    },
+    "ReviewerReasonCode": {
+      "enum": [
+        "smoking_behavior",
+        "non_smoking_behavior",
+        "unclear_view"
+      ],
+      "title": "ReviewerReasonCode",
+      "type": "string"
     },
     "SmokeObservation": {
       "additionalProperties": false,
@@ -389,10 +605,27 @@
     "geometry": {
       "$ref": "#/$defs/Geometry"
     },
+    "inference_receipts": {
+      "items": {
+        "$ref": "#/$defs/CandidateInferenceReceipt"
+      },
+      "title": "Inference Receipts",
+      "type": "array"
+    },
     "last_seen_at": {
       "format": "date-time",
       "title": "Last Seen At",
       "type": "string"
+    },
+    "model_revisions": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "propertyNames": {
+        "$ref": "#/$defs/CandidateInferenceRole"
+      },
+      "title": "Model Revisions",
+      "type": "object"
     },
     "observations": {
       "$ref": "#/$defs/Observations"
