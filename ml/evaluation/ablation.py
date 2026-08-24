@@ -210,6 +210,9 @@ class AblationConfig:
     threshold: float = 0.5
     vlm_revision: str | None = None
     calibration: CalibrationResult | None = None
+    memory_high_water_gib: float | None = None
+    candidate_p95_latency_ms: float | None = None
+    provenance_approved: bool = False
 
     def __post_init__(self) -> None:
         if not self.profile_id.strip():
@@ -218,6 +221,10 @@ class AblationConfig:
             raise ValueError("threshold must be in [0, 1]")
         if self.use_vlm and not self.vlm_revision:
             raise ValueError("VLM profiles require a revision")
+        if self.memory_high_water_gib is not None and self.memory_high_water_gib < 0:
+            raise ValueError("memory_high_water_gib must be non-negative")
+        if self.candidate_p95_latency_ms is not None and self.candidate_p95_latency_ms < 0:
+            raise ValueError("candidate_p95_latency_ms must be non-negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,6 +296,9 @@ class AblationResult:
             "use_vlm": self.config.use_vlm,
             "threshold": self.config.threshold,
             "vlm_revision": self.config.vlm_revision,
+            "memory_high_water_gib": self.config.memory_high_water_gib,
+            "candidate_p95_latency_ms": self.config.candidate_p95_latency_ms,
+            "provenance_approved": self.config.provenance_approved,
             "report": self.report.to_dict(),
             "confidence_intervals": self.intervals.to_dict(),
             "sealed_event_ids": list(self.sealed_event_ids),
@@ -306,12 +316,14 @@ class AblationReport:
     results: tuple[AblationResult, ...]
     sealed_event_ids: tuple[str, ...]
     source_digest: str
+    sealed_event_set_sha256: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
             "schema_version": "ml.ablation.v1",
             "sealed_event_ids": list(self.sealed_event_ids),
             "source_digest": self.source_digest,
+            "sealed_event_set_sha256": self.sealed_event_set_sha256,
             "results": [result.to_dict() for result in self.results],
         }
         payload["report_sha256"] = hashlib.sha256(_canonical(payload).encode()).hexdigest()
@@ -326,6 +338,7 @@ def run_ablation(
     configs: Iterable[AblationConfig],
     *,
     confidence_level: float = 0.95,
+    sealed_event_set_sha256: str | None = None,
 ) -> AblationReport:
     """Evaluate fixed sealed rows with one or more deterministic profiles."""
 
@@ -376,7 +389,7 @@ def run_ablation(
                 source_digest,
             )
         )
-    return AblationReport(tuple(results), event_ids, source_digest)
+    return AblationReport(tuple(results), event_ids, source_digest, sealed_event_set_sha256)
 
 
 @dataclass(frozen=True, slots=True)
@@ -432,3 +445,40 @@ __all__ = [
     "proportion_interval",
     "run_ablation",
 ]
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Emit a truthful receipt when a sealed event catalogue is unavailable.
+
+    The command is intentionally useful in an offline bundle before site
+    labels arrive: it reports ``blocked`` and never manufactures a metric.
+    Runtime callers with approved sealed rows should use :func:`run_ablation`
+    and :func:`evaluate_promotion` directly.
+    """
+
+    import argparse
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(description="Run metadata-only GPU ablation gates")
+    parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument("--sealed", action="store_true")
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args(argv)
+    config_bytes = args.config.read_bytes()
+    receipt: dict[str, Any] = {
+        "schema_version": "ml.ablation-receipt.v1",
+        "state": "blocked",
+        "reason": "sealed event catalogue is not supplied; no metrics were generated",
+        "config_sha256": hashlib.sha256(config_bytes).hexdigest(),
+        "sealed_requested": args.sealed,
+    }
+    encoded = _canonical(receipt) + "\n"
+    if args.output:
+        args.output.write_text(encoded, encoding="utf-8")
+    else:
+        print(encoded, end="")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

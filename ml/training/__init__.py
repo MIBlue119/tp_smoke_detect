@@ -8,6 +8,12 @@ from .baseline import (
     load_baseline,
     verify_export_load,
 )
+from .pipeline import (
+    CalibrationAccessError,
+    TrainingReceipt,
+    block_without_weights,
+    calibrate_training_split,
+)
 
 __all__ = [
     "BaselineArtifact",
@@ -16,4 +22,8 @@ __all__ = [
     "export_baseline",
     "load_baseline",
     "verify_export_load",
+    "CalibrationAccessError",
+    "TrainingReceipt",
+    "block_without_weights",
+    "calibrate_training_split",
 ]

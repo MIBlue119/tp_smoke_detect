@@ -1,25 +1,35 @@
 {
-  "schema_version": "evaluation.config.v1",
-  "event_gap_ms": 120000,
-  "calibration_bins": 10,
-  "split_ratios": {
-    "train": 0.7,
-    "validation": 0.15,
-    "sealed_test": 0.15
-  },
-  "named_confusion_classes": [
-    "betel_quid",
-    "phone",
-    "drink",
-    "food",
-    "nose_touch",
-    "pen_toothpick",
-    "steam",
-    "vape",
-    "heated_tobacco"
-  ],
-  "privacy": {
-    "store_media_in_git": false,
-    "store_weights_in_git": false
-  }
+    "schema_version": "evaluation.config.v1",
+    "event_gap_ms": 120000,
+    "calibration_bins": 10,
+    "split_ratios": {"train": 0.7, "validation": 0.15, "sealed_test": 0.15},
+    "named_confusion_classes": [
+        "betel_quid",
+        "phone",
+        "drink",
+        "food",
+        "nose_touch",
+        "pen_toothpick",
+        "steam",
+        "vape",
+        "heated_tobacco",
+    ],
+    "sealed_evaluation": {
+        "min_precision": 0.8,
+        "min_recall": 0.7,
+        "min_organic_positives": 100,
+        "min_each_confounder": 100,
+        "min_cameras": 4,
+        "min_calendar_days": 14,
+        "confidence_level": 0.95,
+        "replay_manifest": "ml/configs/replay-20-streams.json",
+    },
+    "reviewer_promotion": {
+        "min_false_positive_reduction": 0.2,
+        "max_recall_loss": 0.02,
+        "max_latency_delta_ms": 2000,
+        "max_memory_high_water_gib": 22,
+        "requires_provenance_approval": true,
+    },
+    "privacy": {"store_media_in_git": false, "store_weights_in_git": false},
 }
