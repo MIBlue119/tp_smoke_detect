@@ -23,6 +23,20 @@ from .metrics import (
     aggregate_events,
     evaluate_events,
 )
+from .promotion import (
+    PromotionDecision,
+    PromotionThresholds,
+    SealedEvaluationSet,
+    SealedEventMetadata,
+    build_sealed_event_set,
+    evaluate_promotion,
+)
+from .replay import (
+    ReplayStreamSpec,
+    ReplayWorkloadManifest,
+    build_replay_manifest,
+    load_replay_manifest,
+)
 
 __all__ = [
     "AblationConfig",
@@ -44,4 +58,14 @@ __all__ = [
     "evaluate_events",
     "proportion_interval",
     "run_ablation",
+    "ReplayStreamSpec",
+    "ReplayWorkloadManifest",
+    "build_replay_manifest",
+    "load_replay_manifest",
+    "PromotionDecision",
+    "PromotionThresholds",
+    "SealedEventMetadata",
+    "SealedEvaluationSet",
+    "build_sealed_event_set",
+    "evaluate_promotion",
 ]
