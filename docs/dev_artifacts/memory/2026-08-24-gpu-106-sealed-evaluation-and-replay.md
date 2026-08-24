@@ -21,4 +21,4 @@
   real clip hashes, explicit privacy/retention/consent dispositions, and sealed
   labels held outside training/calibration. Treat synthetic replay metadata as
   schema evidence only; never convert it into a load or quality claim.
-- **Related commit:** GPU-106 implementation commit (see branch history).
+- **Related commit:** `aced79d`.
