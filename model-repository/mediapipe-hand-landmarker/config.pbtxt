@@ -1,0 +1,18 @@
+name: "mediapipe-hand-landmarker"
+backend: "python"
+max_batch_size: 4
+version_policy { specific { versions: 1 } }
+input [
+  { name: "person_crop" data_type: TYPE_FP32 dims: [ 3, 224, 224 ] }
+]
+output [
+  { name: "landmarks" data_type: TYPE_FP32 dims: [ -1, 5 ] }
+]
+parameters {
+  key: "model_artifact_id"
+  value: { string_value: "mediapipe-hand-landmarker" }
+}
+parameters {
+  key: "release_manifest"
+  value: { string_value: "gpu-baseline-r5:0.1.0" }
+}

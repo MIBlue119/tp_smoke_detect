@@ -1,0 +1,18 @@
+name: "peoplenet-transformer"
+platform: "tensorrt_plan"
+max_batch_size: 8
+version_policy { specific { versions: 1 } }
+input [
+  { name: "images" data_type: TYPE_FP16 dims: [ 3, 544, 960 ] }
+]
+output [
+  { name: "detections" data_type: TYPE_FP16 dims: [ -1, 7 ] }
+]
+parameters {
+  key: "model_artifact_id"
+  value: { string_value: "peoplenet-transformer" }
+}
+parameters {
+  key: "release_manifest"
+  value: { string_value: "gpu-baseline-r5:0.1.0" }
+}

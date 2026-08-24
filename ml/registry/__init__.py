@@ -6,6 +6,17 @@ from .model_card import (
     build_provenance_report,
     write_provenance_report,
 )
+from .model_repository import (
+    AcquisitionReceipt,
+    AcquisitionRecord,
+    ArtifactVerification,
+    EngineBinding,
+    LicenseDisposition,
+    ModelArtifact,
+    ModelRepositoryManifest,
+    acquire_model_artifact,
+    verify_local_artifact,
+)
 from .release import (
     ModelReleaseManifest,
     PromotionResult,
@@ -24,4 +35,13 @@ __all__ = [
     "validate_promotion",
     "validate_release_manifest",
     "write_provenance_report",
+    "AcquisitionReceipt",
+    "AcquisitionRecord",
+    "ArtifactVerification",
+    "EngineBinding",
+    "LicenseDisposition",
+    "ModelArtifact",
+    "ModelRepositoryManifest",
+    "acquire_model_artifact",
+    "verify_local_artifact",
 ]
