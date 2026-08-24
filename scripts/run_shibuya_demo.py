@@ -55,6 +55,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--model-root", type=Path, required=True)
+    parser.add_argument("--safe-model-root", type=Path, required=True)
     parser.add_argument("--boundary-receipt", type=Path, required=True)
     parser.add_argument("--manual-review", type=Path, required=True)
     parser.add_argument("--run-id", required=True)
@@ -82,18 +83,20 @@ def _model_receipts(payload: dict[str, Any]) -> tuple[ModelReceipt, ...]:
     return tuple(receipts)
 
 
-def _model_spec(receipt: ModelReceipt, model_root: Path) -> ModelSpec:
-    path = model_root / receipt.local_artifact_id.removeprefix("models/")
-    # The receipt uses a root-relative id; model-root points at the actual
-    # ignored ``.../models`` directory supplied by the staging workflow.
-    if receipt.local_artifact_id.startswith("models/"):
-        path = model_root / receipt.local_artifact_id.split("/", 1)[1]
+def _model_spec(receipt: ModelReceipt, model_root: Path, boundary: dict[str, Any]) -> ModelSpec:
+    safe = next(
+        (item for item in boundary.get("safe_artifacts", []) if item.get("role") == receipt.role),
+        None,
+    )
+    if not isinstance(safe, dict):
+        raise RuntimeError(f"boundary has no safe artifact for {receipt.role}")
+    path = model_root / str(safe["artifact_id"])
     return ModelSpec(
         role=receipt.role,
         revision=receipt.model_revision,
         path=path,
-        sha256=receipt.artifact_sha256,
-        size_bytes=receipt.artifact_size_bytes,
+        sha256=str(safe["sha256"]),
+        size_bytes=int(safe["size_bytes"]),
         class_names=("cigarette",) if receipt.role == "cigarette_detector" else ("person",),
     )
 
@@ -114,6 +117,10 @@ def _load_manual_review(path: Path, run_id: str) -> tuple[list[dict[str, Any]], 
     review = _load_json(path)
     if review.get("run_id") != run_id:
         raise RuntimeError("manual review run_id does not match the requested run")
+    if os.environ.get("DEMO_PREPARE_REVIEW") != "1":
+        for field in ("pre_final_annotation_sha256", "rendered_video_sha256"):
+            if not isinstance(review.get(field), str) or len(review[field]) != 64:
+                raise RuntimeError(f"manual review must claim {field} before publication")
     judgments = review.get("judgments")
     if not isinstance(judgments, list) or not judgments:
         raise RuntimeError("manual review must contain at least one completed judgment")
@@ -190,12 +197,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     pose_receipt = next(item for item in models if item.role == "person_pose")
     cigarette_receipt = next(item for item in models if item.role == "cigarette_detector")
     pose = PoseCudaAdapter(
-        _model_spec(pose_receipt, args.model_root),
+        _model_spec(pose_receipt, args.safe_model_root, boundary),
         device_index=args.device,
         confidence=0.25,
     )
     cigarette = CigaretteCudaAdapter(
-        _model_spec(cigarette_receipt, args.model_root),
+        _model_spec(cigarette_receipt, args.safe_model_root, boundary),
         device_index=args.device,
         confidence=0.25,
     )
@@ -308,12 +315,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     write_receipt(media_receipt_path, media_receipt)
     # The review is immutable companion evidence.  It is copied only after
     # the output hash exists, so the final manifest can bind all three files.
-    review_payload = dict(review_payload)
-    review_payload["annotation_sha256"] = sha256_file(annotation_path)
-    review_payload["video_sha256"] = media_receipt.output_sha256
-    review_payload["contact_sheet_artifact_id"] = "contact-sheet.jpg"
+    if os.environ.get("DEMO_PREPARE_REVIEW") != "1" and review_payload["pre_final_annotation_sha256"] != sha256_file(annotation_path):
+        raise RuntimeError("manual review annotation claim does not match pre-final evidence")
+    if os.environ.get("DEMO_PREPARE_REVIEW") != "1" and review_payload["rendered_video_sha256"] != media_receipt.output_sha256:
+        raise RuntimeError("manual review video claim does not match rendered output")
     review_path = output_root / "manual-review.json"
-    atomic_write_json(review_path, review_payload)
+    review_path.write_bytes(args.manual_review.read_bytes())
     contact_sheet = output_root / "contact-sheet.jpg"
     subprocess.run(
         [
@@ -367,6 +374,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "config_sha256": config_hash,
         "checkpoint_boundary_artifact_id": args.boundary_receipt.name,
         "checkpoint_boundary_sha256": sha256_file(args.boundary_receipt),
+        "safe_artifacts": boundary.get("safe_artifacts", []),
+        "checkpoint_lineage": boundary.get("checkpoints", []),
         "runtime_receipt_artifact_id": "runtime-receipt.json",
         "runtime_receipt_sha256": sha256_file(environment_path),
         "notes": [

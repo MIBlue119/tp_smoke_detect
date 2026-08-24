@@ -338,6 +338,8 @@ class DeterministicFusion:
         state.active = False
         state.start_pts_ns = None
         state.last_positive_pts_ns = None
+        state.positive_frames = 0
+        state.missing_frames = 0
 
     def process(self, frames: Iterable[FrameDetections]) -> FusionResult:
         evidence: list[FrameEvidence] = []
@@ -447,7 +449,14 @@ class DeterministicFusion:
                 )
                 continue
             state.missing_frames = 0
-            state.positive_frames += 1
+            # Persistence is an entry gate: weak evidence must not accumulate
+            # toward activation. Once active, the lower exit threshold keeps
+            # the event alive without inflating the next entry streak.
+            if not state.active:
+                if score >= self.config.entry_confidence:
+                    state.positive_frames += 1
+                else:
+                    state.positive_frames = 0
             if (
                 not state.active
                 and state.positive_frames >= self.config.persistence_frames

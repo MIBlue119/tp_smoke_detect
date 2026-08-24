@@ -1,31 +1,146 @@
 {
-  "schema_version": "demo.manual-review.v1",
+  "contact_sheet_artifact_id": "contact-sheet.jpg",
+  "full_clip_claim": "not assessed",
+  "judgments": [
+    {
+      "frame_index": 0,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 0.0
+    },
+    {
+      "frame_index": 60,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 2.0
+    },
+    {
+      "frame_index": 120,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 4.0
+    },
+    {
+      "frame_index": 180,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 6.0
+    },
+    {
+      "frame_index": 240,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 8.0
+    },
+    {
+      "frame_index": 300,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 10.0
+    },
+    {
+      "frame_index": 360,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 12.0
+    },
+    {
+      "frame_index": 420,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 14.0
+    },
+    {
+      "frame_index": 480,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 16.0
+    },
+    {
+      "frame_index": 539,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 18.0
+    },
+    {
+      "frame_index": 599,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 20.0
+    },
+    {
+      "frame_index": 659,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 22.0
+    },
+    {
+      "frame_index": 719,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 24.0
+    },
+    {
+      "frame_index": 779,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 26.0
+    },
+    {
+      "frame_index": 839,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 28.0
+    },
+    {
+      "frame_index": 899,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 30.0
+    },
+    {
+      "frame_index": 959,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 32.0
+    },
+    {
+      "frame_index": 1019,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 34.0
+    },
+    {
+      "frame_index": 1079,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 36.0
+    },
+    {
+      "frame_index": 1139,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 38.0
+    },
+    {
+      "frame_index": 1199,
+      "judgment": "unclear",
+      "reason": "no confident cigarette candidate in the sampled view",
+      "timestamp_seconds": 40.0
+    }
+  ],
+  "pre_final_annotation_sha256": "99b7c3ecdf59a2c5f62e651c6fa46949b7d5c7194771ae9d539655be2ff960b6",
+  "raw_evidence_sha256": "99b7c3ecdf59a2c5f62e651c6fa46949b7d5c7194771ae9d539655be2ff960b6",
+  "rendered_video_sha256": "d975b7f47f7e6ef92348b2bacb6e21fd8f537b17cb4b3c1d8687ad2a0e4d366c",
+  "review_boundary": "This is a spot-check, not an accuracy estimate; no threshold or raw model evidence was changed.",
+  "review_scope": "Completed review of fixed two-second anchors against the rendered clip; visibility judgments do not claim full-clip accuracy.",
   "run_id": "shibuya-GByZa0qbA8A-r1",
   "sampling": "every two seconds from 0s through 40s; no event anchors because model emitted zero events",
-  "judgments": [
-    {"frame_index": 0, "timestamp_seconds": 0.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 60, "timestamp_seconds": 2.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 120, "timestamp_seconds": 4.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 180, "timestamp_seconds": 6.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 240, "timestamp_seconds": 8.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 300, "timestamp_seconds": 10.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 360, "timestamp_seconds": 12.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 420, "timestamp_seconds": 14.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 480, "timestamp_seconds": 16.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 539, "timestamp_seconds": 18.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 599, "timestamp_seconds": 20.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 659, "timestamp_seconds": 22.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 719, "timestamp_seconds": 24.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 779, "timestamp_seconds": 26.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 839, "timestamp_seconds": 28.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 899, "timestamp_seconds": 30.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 959, "timestamp_seconds": 32.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 1019, "timestamp_seconds": 34.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 1079, "timestamp_seconds": 36.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 1139, "timestamp_seconds": 38.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"},
-    {"frame_index": 1199, "timestamp_seconds": 40.0, "judgment": "unclear", "reason": "no confident cigarette candidate in the sampled view"}
-  ],
-  "summary": {"true_candidate": 0, "false_candidate": 0, "visible_miss": 0, "unclear": 21},
-  "contact_sheet_artifact_id": "contact-sheet.jpg",
-  "review_boundary": "This is a spot-check, not an accuracy estimate; no threshold or raw model evidence was changed."
+  "schema_version": "demo.manual-review.v1",
+  "summary": {
+    "false_candidate": 0,
+    "true_candidate": 0,
+    "unclear": 21,
+    "visible_miss": 0
+  }
 }
