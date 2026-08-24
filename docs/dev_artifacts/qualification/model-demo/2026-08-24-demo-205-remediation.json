@@ -13,6 +13,7 @@
   "contact_sheet_sha256": "50345ddf0c8fecdbe818e42b8b1b7fde7215f8f4a641276f9c1435fb0a74e1dc",
   "boundary_receipt_sha256": "a7b2de425ceb11b6d2c591a487287b314f2f13cfe056dca89313936c221818fc",
   "boundary_image_id": "sha256:3eb2c8dcbbffe59cb969690c6b48af7e72dde6d0a8a484995c841764902cf2b9",
+  "runtime_receipt_sha256": "438a726f1d9330c55000f44c05b0d348159ab308cf2f332514e9c0ef1a4d5673",
   "manual_review": "21 completed unclear anchors; no pending placeholders",
   "production_qualified": false,
   "follow_up": "Only consider RT-DETR research after a broader labelled evaluation demonstrates visible misses; do not train on this clip."
