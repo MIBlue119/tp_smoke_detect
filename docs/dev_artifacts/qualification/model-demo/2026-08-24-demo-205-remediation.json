@@ -1,6 +1,6 @@
 {
   "annotation_sha256": "99b7c3ecdf59a2c5f62e651c6fa46949b7d5c7194771ae9d539655be2ff960b6",
-  "boundary_image_id": "sha256:3eb2c8dcbbffe59cb969690c6b48af7e72dde6d0a8a484995c841764902cf2b9",
+  "boundary_image_id": "sha256:f1f8de0dd9911e73bafe432f4100b9e6e5ad8b9b94ac33347c13d02a8dfa3f0b",
   "boundary_receipt_sha256": "9a291cbf9968565811de5dd704e93804b1d393a1f955f9a6a9059a166e600017",
   "checkpoint_lineage": [
     {
