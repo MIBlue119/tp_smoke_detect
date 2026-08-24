@@ -35,6 +35,56 @@ void string_array(std::ostringstream& output, const std::vector<std::string>& va
   output << ']';
 }
 
+void inference_receipt(std::ostringstream& output, const InferenceReceipt& receipt) {
+  output << '{';
+  key(output, "role"); quote(output, receipt.role);
+  output << ','; key(output, "status"); quote(output, receipt.status);
+  output << ','; key(output, "reason_code"); quote(output, receipt.reason_code);
+  output << ','; key(output, "request_id");
+  if (receipt.request_id.empty()) output << "null"; else quote(output, receipt.request_id);
+  output << ','; key(output, "correlation_id");
+  if (receipt.correlation_id.empty()) output << "null";
+  else quote(output, receipt.correlation_id);
+  output << ','; key(output, "model_revision"); quote(output, receipt.model_revision);
+  output << ','; key(output, "artifact_revision"); quote(output, receipt.artifact_revision);
+  output << ','; key(output, "output_schema"); quote(output, receipt.output_schema);
+  output << ','; key(output, "deadline_outcome"); quote(output, receipt.deadline_outcome);
+  output << ','; key(output, "score");
+  if (receipt.has_score) output << receipt.score; else output << "null";
+  output << ','; key(output, "reviewer");
+  if (!receipt.has_reviewer) {
+    output << "null";
+  } else {
+    output << '{';
+    key(output, "label"); quote(output, receipt.reviewer.label);
+    output << ','; key(output, "score"); output << receipt.reviewer.score;
+    output << ','; key(output, "reason_code"); quote(output, receipt.reviewer.reason_code);
+    output << '}';
+  }
+  output << '}';
+}
+
+void inference_receipt_array(std::ostringstream& output,
+                             const std::vector<InferenceReceipt>& receipts) {
+  output << '[';
+  for (std::size_t index = 0; index < receipts.size(); ++index) {
+    if (index != 0) output << ',';
+    inference_receipt(output, receipts[index]);
+  }
+  output << ']';
+}
+
+void model_revision_map(std::ostringstream& output,
+                        const std::vector<std::pair<std::string, std::string>>& revisions) {
+  output << '{';
+  for (std::size_t index = 0; index < revisions.size(); ++index) {
+    if (index != 0) output << ',';
+    key(output, revisions[index].first.c_str());
+    quote(output, revisions[index].second);
+  }
+  output << '}';
+}
+
 }  // namespace
 
 std::string CandidateEnvelope::to_json() const {
@@ -91,7 +141,10 @@ std::string CandidateEnvelope::to_json() const {
   output << ','; key(output, "cycle_interval_ms"); output << observations.cycle_interval_ms;
   output << ','; key(output, "persistence_ms"); output << observations.persistence_ms << '}';
   output << ','; key(output, "independent_channels"); string_array(output, observations.independent_channels);
-  output << "}" << '}';
+  output << '}';
+  output << ','; key(output, "inference_receipts"); inference_receipt_array(output, inference_receipts);
+  output << ','; key(output, "model_revisions"); model_revision_map(output, model_revisions);
+  output << '}';
   return output.str();
 }
 

@@ -56,6 +56,25 @@ int main() {
   CHECK(json.find("\"occurred_at\":\"") != std::string::npos);
   CHECK(json.find("raw_pixels") == std::string::npos);
   CHECK(json.find("cam-a") != std::string::npos);
+  candidate->inference_receipts.push_back(
+      tp_smoke_detect::media::InferenceReceipt{
+          .role = "reviewer",
+          .status = "timeout",
+          .reason_code = "timeout",
+          .request_id = "33333333-3333-4333-8333-333333333333",
+          .correlation_id = "44444444-4444-4444-8444-444444444444",
+          .model_revision = "reviewer-r1",
+          .artifact_revision = "artifact-r1",
+          .output_schema = "reviewer.v1",
+          .deadline_outcome = "expired",
+          .reviewer = {},
+          .has_reviewer = false,
+      });
+  candidate->model_revisions.emplace_back("reviewer", "reviewer-r1");
+  const std::string enriched_json = candidate->to_json();
+  CHECK(enriched_json.find("inference_receipts") != std::string::npos);
+  CHECK(enriched_json.find("\"status\":\"timeout\"") != std::string::npos);
+  CHECK(enriched_json.find("\"model_revisions\"") != std::string::npos);
   CHECK(!worker.ingest("missing", frame(), t0));
   DeepStreamPipeline pipeline;
   CHECK(!pipeline.available());
@@ -73,7 +92,7 @@ int main() {
   CHECK(publisher.publish_failures() == 1);
   CHECK(publisher.flush([](const auto&) { return true; }) == 2);
   CHECK(publisher.pending() == 0);
-  std::cout << json << std::endl;
+  std::cout << enriched_json << std::endl;
 #undef CHECK
   return 0;
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,28 @@ struct CandidateObservations {
   std::vector<std::string> independent_channels;
 };
 
+struct ReviewerEvidence {
+  std::string label{"unclear"};
+  double score{0.0};
+  std::string reason_code{"unclear_view"};
+};
+
+struct InferenceReceipt {
+  std::string role;
+  std::string status{"unavailable"};
+  std::string reason_code{"not_ready"};
+  std::string request_id;
+  std::string correlation_id;
+  std::string model_revision{"unknown"};
+  std::string artifact_revision{"unknown"};
+  std::string output_schema{"none"};
+  std::string deadline_outcome{"not_applicable"};
+  double score{0.0};
+  bool has_score{false};
+  ReviewerEvidence reviewer;
+  bool has_reviewer{false};
+};
+
 struct CandidateEnvelope {
   // Delivery identity is mandatory for every newly emitted broker envelope.
   // Values use UUID text so the native producer can be validated by the same
@@ -61,6 +84,8 @@ struct CandidateEnvelope {
   double coverage_score{1.0};
   CandidateQuality quality;
   CandidateObservations observations;
+  std::vector<InferenceReceipt> inference_receipts;
+  std::vector<std::pair<std::string, std::string>> model_revisions;
 
   // Canonical JSON for track.candidate.v1. No image bytes or free-form model
   // output are representable by this type.
