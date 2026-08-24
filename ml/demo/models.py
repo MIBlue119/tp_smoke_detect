@@ -165,6 +165,10 @@ def runtime_receipt(device_index: int = 0) -> RuntimeReceipt:
 
 def _load_yolo(spec: ModelSpec, *, enforce_isolation: bool) -> Any:
     spec.validate()
+    if spec.path.suffix.lower() != ".onnx":
+        raise ModelAdapterError(
+            "host inference refuses pickle checkpoints; supply a safe ONNX artifact"
+        )
     if enforce_isolation:
         require_isolated_environment()
     try:
@@ -174,7 +178,8 @@ def _load_yolo(spec: ModelSpec, *, enforce_isolation: bool) -> Any:
             "Ultralytics is required only in the optional isolated GPU environment"
         ) from exc
     try:
-        return YOLO(str(spec.path))
+        task = "pose" if spec.role == "person_pose" else "detect"
+        return YOLO(str(spec.path), task=task)
     except Exception as exc:  # model code is third-party and may raise many types
         raise ModelAdapterError(f"checkpoint load failed for role {spec.role}") from exc
 

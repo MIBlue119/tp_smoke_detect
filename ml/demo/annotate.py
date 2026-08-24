@@ -254,14 +254,6 @@ def _draw_frame(
     runtime = payload["runtime"]
     models = payload["models"]
 
-    def short_revision(value: Any) -> str:
-        text = str(value)
-        return text.rsplit("/", 1)[-1][-14:]
-
-    model_ids = " ".join(
-        f"{item.get('role', 'unknown')}={short_revision(item.get('model_revision', 'unknown'))}"
-        for item in models
-    )
     metadata = frame_metadata or (entries[0] if entries else {})
     frame_index = metadata.get("frame_index", "?")
     pts_ns = metadata.get("source_pts_ns")
@@ -270,13 +262,13 @@ def _draw_frame(
         if isinstance(pts_ns, int | float)
         else "t=unknown"
     )
-    badge = (
-        f"frame={frame_index} {timestamp} | GPU {runtime.get('device_name', 'unknown')} | "
-        f"{model_ids}"
-    )
-    draw.rectangle((0, 0, width, 58), fill=(0, 0, 0, 205))
+    run_id = str(payload.get("run_id", "unknown"))
+    draw.rectangle((0, 0, width, 96), fill=(0, 0, 0, 215))
     draw.text((8, 5), BANNER, fill=(255, 235, 80), font=_font(18))
-    draw.text((8, 29), badge, fill=(240, 240, 240), font=_font(11))
+    draw.text((8, 27), f"run_id={run_id}", fill=(240, 240, 240), font=_font(11))
+    draw.text((8, 42), f"frame={frame_index} {timestamp} | GPU {runtime.get('device_name', 'unknown')}", fill=(240, 240, 240), font=_font(11))
+    for index, item in enumerate(models):
+        draw.text((8, 57 + index * 14), f"{item.get('role', 'unknown')} revision={item.get('model_revision', 'unknown')}", fill=(220, 220, 220), font=_font(10))
     # Keep the overlay readable on crowded frames.  Candidate/unclear entries
     # win over low-value unmatched boxes; every omitted item remains in the
     # immutable JSON evidence.

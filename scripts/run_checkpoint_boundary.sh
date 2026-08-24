@@ -50,6 +50,7 @@ assert v["root_filesystem"] == "read-only"
 assert v["inputs_mount"] == "read-only"
 assert v["credentials"] == "not-provided"
 assert len(v["checkpoints"]) == 2 and all(x["loaded"] for x in v["checkpoints"])
+assert len(v["safe_artifacts"]) == 2 and all(x["format"] == "onnx" for x in v["safe_artifacts"])
 v["image_ref"] = sys.argv[2]
 v["image_id"] = sys.argv[3]
 v["invocation"] = ["--network", "none", "--user", "65532:65532", "--read-only", "inputs:ro", "outputs:rw"]
