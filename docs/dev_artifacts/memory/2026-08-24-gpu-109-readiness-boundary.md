@@ -27,4 +27,4 @@ prevention: Treat readiness as an explicit contract across service boundaries;
 every new GPU component needs an observable readiness signal and a test that
 proves missing evidence remains degraded/unqualified.
 
-related commit: GPU-109 integration commit (recorded by the caller).
+related commit: `fa44eb8` (`feat(gpu-109): integrate GPU vertical slice and readiness`).
