@@ -100,8 +100,13 @@ class HealthRegistry:
             value = CameraHealth(camera_id, state, last_good_frame_at, reason)
             self._cameras[camera_id] = value
             if self.metrics:
-                if last_good_frame_at:
-                    self.metrics.frame(camera_id, last_good_frame_at.timestamp())
+                self.metrics.camera_state(
+                    camera_id,
+                    state.value,
+                    frame_timestamp_seconds=(
+                        last_good_frame_at.timestamp() if last_good_frame_at else None
+                    ),
+                )
                 if state in {HealthState.DEGRADED, HealthState.UNAVAILABLE} and (
                     previous is None or previous.state is not state
                 ):
@@ -121,6 +126,11 @@ class HealthRegistry:
             self._queue_depth[camera_id] = depth
             if self.metrics:
                 self.metrics.queue(camera_id, depth)
+                self.metrics.camera_state(
+                    camera_id,
+                    self._cameras.get(camera_id, CameraHealth(camera_id)).state.value,
+                    queue_depth=depth,
+                )
 
     def mark_camera_degraded(self, camera_id: str, reason: str) -> CameraHealth:
         current = self._cameras.get(camera_id)

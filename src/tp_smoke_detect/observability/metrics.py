@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import threading
+import time
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -18,6 +19,11 @@ from dataclasses import dataclass
 from ..domain.models.decisions import ReasonCode
 
 _FORBIDDEN_LABELS = {
+    "camera_id",
+    "camera_name",
+    "device_id",
+    "gpu_id",
+    "gpu_uuid",
     "track_id",
     "decision_id",
     "artifact_id",
@@ -27,7 +33,6 @@ _FORBIDDEN_LABELS = {
     "correlation_id",
 }
 _ALLOWED_LABELS = {
-    "camera_id",
     "component",
     "outcome",
     "reason",
@@ -39,10 +44,92 @@ _ALLOWED_LABELS = {
     "state",
     "status",
 }
+_BOUNDED_LABEL_VALUES = {
+    "component": frozenset(
+        {
+            "api",
+            "audio",
+            "broker",
+            "camera",
+            "core",
+            "database",
+            "gpu",
+            "media",
+            "model",
+            "nvdec",
+            "retention",
+            "triton",
+            "other",
+        }
+    ),
+    "media_class": frozenset({"raw", "event_clip", "metadata", "other"}),
+    "mode": frozenset({"simulation", "replay", "shadow", "human_confirmed", "automatic", "other"}),
+    "model_role": frozenset(
+        {
+            "person_detector",
+            "pose",
+            "hand_landmarker",
+            "crop_classifier",
+            "smoke_classifier",
+            "reviewer",
+            "other",
+        }
+    ),
+    "operation": frozenset({"decode", "batch", "inference", "reconnect", "other"}),
+    "outcome": frozenset(
+        {
+            "verified",
+            "rejected",
+            "unclear",
+            "error",
+            "met",
+            "missed",
+            "expired",
+            "timeout",
+            "other",
+        }
+    ),
+    "reason": frozenset({"other"}),
+    "stage": frozenset(
+        {"detected", "quality", "pose", "object", "temporal", "review", "completed", "other"}
+    ),
+    "state": frozenset(
+        {
+            "healthy",
+            "ready",
+            "degraded",
+            "unavailable",
+            "unknown",
+            "warming",
+            "timeout",
+            "failed",
+            "other",
+        }
+    ),
+    "status": frozenset(
+        {
+            "accepted",
+            "duplicate",
+            "rejected",
+            "expired",
+            "failed",
+            "ok",
+            "error",
+            "timeout",
+            "unavailable",
+            "other",
+        }
+    ),
+}
 _DECISION_REASONS = frozenset(item.value for item in ReasonCode) | {
     "evaluation_pending_provider",
+    "model_unavailable",
+    "queue_saturated",
+    "gpu_oom",
+    "stream_stalled",
     "other",
 }
+_BOUNDED_LABEL_VALUES["reason"] = _DECISION_REASONS
 
 
 def _escape(value: str) -> str:
@@ -115,7 +202,18 @@ class MetricRegistry:
                 f"{definition.name} requires labels {definition.labels}, "
                 f"got {tuple(sorted(labels))}"
             )
-        return _label_key(labels)
+        normalized = {key: self._normalize_label(key, value) for key, value in labels.items()}
+        return _label_key(normalized)
+
+    @staticmethod
+    def _normalize_label(key: str, value: str) -> str:
+        """Map untrusted values to a finite vocabulary before they become labels."""
+
+        bounded = _BOUNDED_LABEL_VALUES.get(key)
+        if bounded is None:
+            return str(value)
+        candidate = str(value)
+        return candidate if candidate in bounded else "other"
 
     def inc(self, name: str, amount: float = 1.0, **labels: str) -> None:
         if amount < 0 or not math.isfinite(amount):
@@ -215,16 +313,56 @@ class OperationalMetrics:
 
     def __init__(self, registry: MetricRegistry | None = None) -> None:
         self.registry = registry or MetricRegistry()
+        self._camera_last_good_frame: dict[str, float] = {}
+        self._camera_queue_depth: dict[str, int] = {}
+        self._camera_queue_age: dict[str, float] = {}
+        self._camera_state: dict[str, str] = {}
+        self._camera_lock = threading.RLock()
         r = self.registry
         r.gauge(
             "smoke_camera_last_good_frame_timestamp_seconds",
-            "Unix timestamp of the last good frame",
-            ("camera_id",),
+            "Unix timestamp of the latest good frame across cameras",
         )
-        r.gauge("smoke_camera_queue_depth", "Current bounded queue depth", ("camera_id",))
+        r.gauge("smoke_camera_frame_age_seconds", "Maximum age of a camera frame")
+        r.gauge("smoke_camera_stale_count", "Number of cameras beyond the freshness deadline")
+        r.gauge("smoke_camera_queue_depth", "Maximum bounded queue depth across cameras")
+        r.gauge("smoke_camera_queue_age_seconds", "Maximum age of queued camera work")
+        r.gauge("smoke_camera_streams", "Camera count by bounded health state", ("state",))
+        r.counter("smoke_camera_sample_loss_total", "Scheduled camera samples not processed")
         r.histogram("smoke_stage_latency_seconds", "Stage processing latency", ("stage",))
         r.counter("smoke_decisions_total", "Completed decisions", ("outcome", "reason"))
         r.counter("smoke_model_requests_total", "Model requests", ("model_role", "status"))
+        r.gauge(
+            "smoke_model_readiness",
+            "Model readiness by bounded role and state",
+            ("model_role", "state"),
+        )
+        r.gauge("smoke_triton_pending_requests", "Pending Triton requests", ("model_role",))
+        r.counter(
+            "smoke_inference_failures_total",
+            "Inference failures by bounded role and status",
+            ("model_role", "status"),
+        )
+        r.counter(
+            "smoke_deadline_outcomes_total",
+            "Stage deadline outcomes",
+            ("stage", "outcome"),
+        )
+        r.counter("smoke_process_restarts_total", "Component process restarts", ("component",))
+        r.counter(
+            "smoke_audio_suppressed_total",
+            "Audio requests suppressed by degraded safety",
+            ("reason",),
+        )
+        r.gauge("smoke_gpu_utilization_ratio", "GPU utilization ratio")
+        r.gauge("smoke_gpu_memory_used_bytes", "GPU memory currently used")
+        r.gauge("smoke_gpu_memory_total_bytes", "GPU memory capacity")
+        r.gauge("smoke_gpu_memory_high_water_bytes", "GPU memory high-water mark")
+        r.gauge("smoke_gpu_memory_pressure", "GPU memory pressure flag")
+        r.gauge("smoke_gpu_temperature_celsius", "GPU temperature")
+        r.gauge("smoke_gpu_power_watts", "GPU power draw")
+        r.gauge("smoke_nvdec_utilization_ratio", "NVDEC utilization ratio")
+        r.gauge("smoke_batch_fill_ratio", "Media batch fill ratio")
         r.counter("smoke_audio_requests_total", "Audio requests", ("status",))
         r.counter(
             "smoke_degraded_transitions_total",
@@ -236,22 +374,155 @@ class OperationalMetrics:
         )
 
     def frame(self, camera_id: str, timestamp_seconds: float) -> None:
-        self.registry.set(
-            "smoke_camera_last_good_frame_timestamp_seconds", timestamp_seconds, camera_id=camera_id
-        )
+        if not camera_id:
+            raise ValueError("camera_id is required")
+        if not math.isfinite(timestamp_seconds) or timestamp_seconds < 0:
+            raise ValueError("frame timestamp must be finite and non-negative")
+        with self._camera_lock:
+            self._camera_last_good_frame[camera_id] = timestamp_seconds
+            self._camera_state[camera_id] = "healthy"
+            self._refresh_camera_aggregates()
 
-    def queue(self, camera_id: str, depth: int) -> None:
-        self.registry.set("smoke_camera_queue_depth", depth, camera_id=camera_id)
+    def queue(self, camera_id: str, depth: int, age_seconds: float = 0.0) -> None:
+        if not camera_id:
+            raise ValueError("camera_id is required")
+        if depth < 0:
+            raise ValueError("queue depth cannot be negative")
+        if not math.isfinite(age_seconds) or age_seconds < 0:
+            raise ValueError("queue age must be finite and non-negative")
+        with self._camera_lock:
+            self._camera_queue_depth[camera_id] = depth
+            self._camera_queue_age[camera_id] = age_seconds
+            self._refresh_camera_aggregates()
+
+    def camera_state(
+        self,
+        camera_id: str,
+        state: str,
+        *,
+        frame_timestamp_seconds: float | None = None,
+        queue_depth: int | None = None,
+        queue_age_seconds: float | None = None,
+    ) -> None:
+        """Record camera state while keeping camera identity out of metrics labels."""
+
+        if not camera_id:
+            raise ValueError("camera_id is required")
+        with self._camera_lock:
+            self._camera_state[camera_id] = state
+            if frame_timestamp_seconds is not None:
+                self._camera_last_good_frame[camera_id] = frame_timestamp_seconds
+            if queue_depth is not None:
+                self._camera_queue_depth[camera_id] = queue_depth
+            if queue_age_seconds is not None:
+                self._camera_queue_age[camera_id] = queue_age_seconds
+            self._refresh_camera_aggregates()
+
+    def _refresh_camera_aggregates(self, *, now: float | None = None) -> None:
+        current = time.time() if now is None else now
+        frames = tuple(self._camera_last_good_frame.values())
+        ages = tuple(max(0.0, current - item) for item in frames)
+        queue_depths = tuple(self._camera_queue_depth.values())
+        queue_ages = tuple(self._camera_queue_age.values())
+        self.registry.set(
+            "smoke_camera_last_good_frame_timestamp_seconds", max(frames, default=0.0)
+        )
+        self.registry.set("smoke_camera_frame_age_seconds", max(ages, default=0.0))
+        self.registry.set("smoke_camera_stale_count", sum(age > 30.0 for age in ages))
+        self.registry.set("smoke_camera_queue_depth", max(queue_depths, default=0))
+        self.registry.set("smoke_camera_queue_age_seconds", max(queue_ages, default=0.0))
+        states: dict[str, int] = defaultdict(int)
+        for state in self._camera_state.values():
+            bounded = state if state in _BOUNDED_LABEL_VALUES["state"] else "other"
+            states[bounded] += 1
+        for state in _BOUNDED_LABEL_VALUES["state"]:
+            self.registry.set("smoke_camera_streams", states.get(state, 0), state=state)
 
     def stage_latency(self, stage: str, seconds: float) -> None:
         self.registry.observe("smoke_stage_latency_seconds", seconds, stage=stage)
 
     def decision(self, outcome: str, reason: str) -> None:
         bounded_reason = reason if reason in _DECISION_REASONS else "other"
-        self.registry.inc("smoke_decisions_total", outcome=outcome, reason=bounded_reason)
+        bounded_outcome = outcome if outcome in _BOUNDED_LABEL_VALUES["outcome"] else "other"
+        self.registry.inc("smoke_decisions_total", outcome=bounded_outcome, reason=bounded_reason)
 
     def model_request(self, model_role: str, status: str) -> None:
         self.registry.inc("smoke_model_requests_total", model_role=model_role, status=status)
+
+    def model_readiness(self, model_role: str, *, ready: bool, state: str | None = None) -> None:
+        readiness = state or ("ready" if ready else "unavailable")
+        self.registry.set(
+            "smoke_model_readiness",
+            1.0 if ready else 0.0,
+            model_role=model_role,
+            state=readiness,
+        )
+
+    def triton_pending(self, model_role: str, pending: int) -> None:
+        if pending < 0:
+            raise ValueError("pending requests cannot be negative")
+        self.registry.set("smoke_triton_pending_requests", pending, model_role=model_role)
+
+    def inference_failure(self, model_role: str, status: str = "error") -> None:
+        self.registry.inc("smoke_inference_failures_total", model_role=model_role, status=status)
+
+    def deadline(self, stage: str, outcome: str) -> None:
+        self.registry.inc("smoke_deadline_outcomes_total", stage=stage, outcome=outcome)
+
+    def restart(self, component: str) -> None:
+        self.registry.inc("smoke_process_restarts_total", component=component)
+
+    def sample_loss(self, amount: float = 1.0) -> None:
+        self.registry.inc("smoke_camera_sample_loss_total", amount)
+
+    def audio_suppressed(self, reason: str) -> None:
+        self.registry.inc("smoke_audio_suppressed_total", reason=reason)
+
+    def gpu(
+        self,
+        *,
+        utilization_ratio: float,
+        memory_used_bytes: float,
+        memory_total_bytes: float,
+        memory_high_water_bytes: float | None = None,
+        temperature_celsius: float = 0.0,
+        power_watts: float = 0.0,
+        nvdec_utilization_ratio: float = 0.0,
+        batch_fill_ratio: float = 0.0,
+    ) -> None:
+        values = {
+            "utilization_ratio": utilization_ratio,
+            "memory_used_bytes": memory_used_bytes,
+            "memory_total_bytes": memory_total_bytes,
+            "temperature_celsius": temperature_celsius,
+            "power_watts": power_watts,
+            "nvdec_utilization_ratio": nvdec_utilization_ratio,
+            "batch_fill_ratio": batch_fill_ratio,
+        }
+        if memory_high_water_bytes is not None:
+            values["memory_high_water_bytes"] = memory_high_water_bytes
+        if any(not math.isfinite(value) or value < 0 for value in values.values()):
+            raise ValueError("GPU telemetry must be finite and non-negative")
+        if utilization_ratio > 1 or nvdec_utilization_ratio > 1 or batch_fill_ratio > 1:
+            raise ValueError("GPU utilization and fill ratios must be between zero and one")
+        if memory_total_bytes <= 0 or memory_used_bytes > memory_total_bytes:
+            raise ValueError(
+                "GPU memory totals must be positive and used memory cannot exceed total"
+            )
+        self.registry.set("smoke_gpu_utilization_ratio", utilization_ratio)
+        self.registry.set("smoke_gpu_memory_used_bytes", memory_used_bytes)
+        self.registry.set("smoke_gpu_memory_total_bytes", memory_total_bytes)
+        self.registry.set(
+            "smoke_gpu_memory_high_water_bytes",
+            max(memory_high_water_bytes or 0.0, memory_used_bytes),
+        )
+        self.registry.set(
+            "smoke_gpu_memory_pressure", float(memory_used_bytes / memory_total_bytes >= 0.9)
+        )
+        self.registry.set("smoke_gpu_temperature_celsius", temperature_celsius)
+        self.registry.set("smoke_gpu_power_watts", power_watts)
+        self.registry.set("smoke_nvdec_utilization_ratio", nvdec_utilization_ratio)
+        self.registry.set("smoke_batch_fill_ratio", batch_fill_ratio)
 
     def audio_request(self, status: str) -> None:
         self.registry.inc("smoke_audio_requests_total", status=status)
@@ -265,6 +536,8 @@ class OperationalMetrics:
         )
 
     def render(self) -> str:
+        with self._camera_lock:
+            self._refresh_camera_aggregates()
         return self.registry.render()
 
 

@@ -5,12 +5,12 @@
     {
       "type": "timeseries",
       "title": "Camera freshness",
-      "targets": [{"expr": "time() - smoke_camera_last_good_frame_timestamp_seconds", "legendFormat": "{{camera_id}}"}]
+      "targets": [{"expr": "smoke_camera_frame_age_seconds", "legendFormat": "max frame age"}, {"expr": "smoke_camera_stale_count", "legendFormat": "stale cameras"}]
     },
     {
       "type": "timeseries",
       "title": "Queue depth",
-      "targets": [{"expr": "smoke_camera_queue_depth", "legendFormat": "{{camera_id}}"}]
+      "targets": [{"expr": "smoke_camera_queue_depth", "legendFormat": "max depth"}, {"expr": "smoke_camera_queue_age_seconds", "legendFormat": "max age"}]
     },
     {
       "type": "timeseries",
@@ -21,6 +21,26 @@
       "type": "timeseries",
       "title": "Stage latency",
       "targets": [{"expr": "histogram_quantile(0.95, rate(smoke_stage_latency_seconds_bucket[5m]))", "legendFormat": "{{stage}}"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "GPU and NVDEC utilization",
+      "targets": [{"expr": "smoke_gpu_utilization_ratio", "legendFormat": "GPU"}, {"expr": "smoke_nvdec_utilization_ratio", "legendFormat": "NVDEC"}, {"expr": "smoke_batch_fill_ratio", "legendFormat": "batch fill"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "GPU memory and thermal telemetry",
+      "targets": [{"expr": "smoke_gpu_memory_used_bytes / 1073741824", "legendFormat": "used GiB"}, {"expr": "smoke_gpu_memory_high_water_bytes / 1073741824", "legendFormat": "high-water GiB"}, {"expr": "smoke_gpu_temperature_celsius", "legendFormat": "temperature C"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Model readiness and Triton queue",
+      "targets": [{"expr": "smoke_model_readiness", "legendFormat": "{{model_role}}/{{state}}"}, {"expr": "smoke_triton_pending_requests", "legendFormat": "{{model_role}} pending"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Degraded-mode signals",
+      "targets": [{"expr": "rate(smoke_inference_failures_total[5m])", "legendFormat": "{{model_role}}/{{status}}"}, {"expr": "rate(smoke_camera_sample_loss_total[5m])", "legendFormat": "sample loss"}, {"expr": "rate(smoke_process_restarts_total[5m])", "legendFormat": "{{component}} restarts"}]
     }
   ]
 }
