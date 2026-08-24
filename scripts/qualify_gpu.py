@@ -624,9 +624,7 @@ def parse_telemetry(
         signature = value.get("signature_ed25519")
         unsigned_value = dict(value)
         unsigned_value.pop("signature_ed25519", None)
-        if verify_key is not None and not verify_ed25519(
-            unsigned_value, signature, verify_key
-        ):
+        if verify_key is not None and not verify_ed25519(unsigned_value, signature, verify_key):
             reasons.append("telemetry signature is invalid")
         if not isinstance(value.get("sequence"), int) or value["sequence"] < 0:
             reasons.append("telemetry sequence is missing")
