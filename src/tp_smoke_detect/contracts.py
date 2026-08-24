@@ -388,6 +388,13 @@ class CandidateEnvelope(EventMetadata):
             hand_to_mouth=pose is not None
             and pose.hand_to_mouth_distance is not None
             and pose.hand_to_mouth_distance > 0,
+            contact_target=(
+                "mouth"
+                if pose is not None
+                and pose.hand_to_mouth_distance is not None
+                and pose.hand_to_mouth_distance > 0
+                else "unknown"
+            ),
             mouth_dwell_ms=pose.mouth_dwell_ms or 0 if pose is not None else 0,
             hand_retreat=temporal.hand_retreat if temporal is not None else False,
             object_label=object_observation.label if object_observation is not None else None,

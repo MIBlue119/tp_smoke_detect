@@ -1,5 +1,13 @@
 service_name: tp-smoke-detect
 environment: development
+candidate:
+  topic: track.candidate.v1
+  dead_letter_topic: track.candidate.v1.dead-letter
+  broker_host: 127.0.0.1
+  broker_port: 1883
+  max_inflight: 32
+  retry_limit: 3
+  require_gpu_receipts: true
 policy:
   mode: simulation
   audio_muted: true

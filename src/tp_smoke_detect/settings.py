@@ -63,6 +63,23 @@ class PolicySettings(BaseModel):
     audio_command_ttl_seconds: Annotated[int, Field(gt=0)] = 30
 
 
+class CandidateServiceSettings(BaseModel):
+    """Bounded local broker consumer settings for the GPU candidate plane."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    topic: str = Field(default="track.candidate.v1", min_length=1, max_length=128)
+    dead_letter_topic: str = Field(
+        default="track.candidate.v1.dead-letter", min_length=1, max_length=128
+    )
+    broker_host: str = Field(default="127.0.0.1", min_length=1, max_length=253)
+    broker_port: Annotated[int, Field(gt=0, le=65535)] = 1883
+    broker_keepalive_seconds: Annotated[int, Field(gt=0, le=3600)] = 30
+    max_inflight: Annotated[int, Field(ge=1, le=1024)] = 32
+    retry_limit: Annotated[int, Field(ge=0, le=32)] = 3
+    require_gpu_receipts: bool = True
+
+
 class AppSettings(BaseSettings):
     """Application settings; defaults are simulation and audio-muted by design."""
 
@@ -81,6 +98,7 @@ class AppSettings(BaseSettings):
     database: str = ":memory:"
     artifact_root: str = "artifacts"
     policy: PolicySettings = Field(default_factory=PolicySettings)
+    candidate: CandidateServiceSettings = Field(default_factory=CandidateServiceSettings)
     cameras: list[CameraProfile] = Field(default_factory=list)
 
 
@@ -114,7 +132,15 @@ def _environment_overrides(document: dict[str, Any]) -> dict[str, Any]:
     times, and JSON lists) as ``BaseSettings``.
     """
 
-    known = {"service_name", "environment", "database", "artifact_root", "policy", "cameras"}
+    known = {
+        "service_name",
+        "environment",
+        "database",
+        "artifact_root",
+        "policy",
+        "candidate",
+        "cameras",
+    }
     overrides: list[tuple[list[str], Any]] = []
     for name, raw_value in os.environ.items():
         if not name.startswith("SMOKE_DETECT_") or name in {
