@@ -1,0 +1,44 @@
+# GPU-107 replay-pack contract.  This checked-in shape is intentionally not a
+# qualification input: source clips and hashes must be supplied by the site
+# outside Git, then the state must be changed to `sealed` in a reviewed bundle.
+schema_version: gpu.replay-workload.v1
+workload_id: rtx3090-representative-20-stream
+version: 0.1.0-metadata
+duration_hours: 2.0
+stream_count: 20
+qualification_state: metadata_only_synthetic
+streams:
+  - stream_id: stream-01
+    camera_id: camera-01
+    codec: h264
+    profile: high
+    resolution: {width: 1920, height: 1080}
+    source_fps: 25
+    analysis_fps: 10
+    bitrate_kbps: 4500
+    gop_frames: 50
+    occupancy: 0.18
+    visible_persons: 2
+    eligible_crop_rate: 0.12
+    candidate_burst_rate: 0.02
+    status: healthy
+    source_kind: synthetic
+    clip_sha256: null
+  - stream_id: stream-02
+    camera_id: camera-02
+    codec: h265
+    profile: main
+    resolution: {width: 1920, height: 1080}
+    source_fps: 30
+    analysis_fps: 10
+    bitrate_kbps: 5200
+    gop_frames: 60
+    occupancy: 0.32
+    visible_persons: 4
+    eligible_crop_rate: 0.19
+    candidate_burst_rate: 0.04
+    status: healthy
+    source_kind: synthetic
+    clip_sha256: null
+  # The remaining rows are represented by the sealed site bundle. Keeping the
+  # checked-in fixture short prevents accidental treatment as real media.

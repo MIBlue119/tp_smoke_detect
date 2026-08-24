@@ -1,0 +1,319 @@
+{
+  "claim_boundary": "RTX 3090 lab only; never production 24-hour qualification",
+  "commands": [
+    {
+      "argv": [
+        "nvidia-smi",
+        "--query-gpu=name,compute_cap,driver_version,memory.total",
+        "--format=csv,noheader,nounits"
+      ],
+      "duration_seconds": 0.018,
+      "returncode": 0,
+      "status": "passed",
+      "stderr_tail": "",
+      "stdout_tail": "NVIDIA GeForce RTX 3090, 8.6, 580.126.09, 24576\n"
+    },
+    {
+      "argv": [
+        "docker",
+        "info",
+        "--format",
+        "server={{.ServerVersion}} default={{.DefaultRuntime}}"
+      ],
+      "duration_seconds": 0.076,
+      "returncode": 0,
+      "status": "passed",
+      "stderr_tail": "",
+      "stdout_tail": "server=28.3.3 default=runc\n"
+    },
+    {
+      "argv": [
+        "docker",
+        "info",
+        "--format",
+        "{{range $name, $_ := .Runtimes}}{{$name}} {{end}}"
+      ],
+      "duration_seconds": 0.038,
+      "returncode": 0,
+      "status": "passed",
+      "stderr_tail": "",
+      "stdout_tail": "io.containerd.runc.v2 nvidia runc \n"
+    },
+    {
+      "argv": [
+        "docker",
+        "image",
+        "inspect",
+        "nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759",
+        "--format",
+        "{{json .RepoDigests}}"
+      ],
+      "duration_seconds": 0.01,
+      "returncode": 1,
+      "status": "failed",
+      "stderr_tail": "Error response from daemon: No such image: nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759\n",
+      "stdout_tail": "\n"
+    }
+  ],
+  "errors": [
+    "exact digest-pinned image is not imported",
+    "models['peoplenet-transformer'].source.license disposition must be approved",
+    "models['peoplenet-transformer'].source.expected_sha256 must be a SHA-256 digest",
+    "models['peoplenet-transformer'].source.expected_size_bytes must be positive",
+    "models['peoplenet-transformer'].artifact_sha256 must be a SHA-256 digest",
+    "models['peoplenet-transformer'].artifact_size_bytes must be positive",
+    "models['peoplenet-transformer'].parent_checkpoint is required",
+    "models['peoplenet-transformer'].dataset_manifest_sha256 must be a SHA-256 digest",
+    "models['peoplenet-transformer'].export_sha256 must be a SHA-256 digest",
+    "models['peoplenet-transformer'].sbom_sha256 must be a SHA-256 digest",
+    "models['peoplenet-transformer'].rollback_target is required",
+    "models['mediapipe-pose-landmarker'].source.license disposition must be approved",
+    "models['mediapipe-pose-landmarker'].source.expected_sha256 must be a SHA-256 digest",
+    "models['mediapipe-pose-landmarker'].source.expected_size_bytes must be positive",
+    "models['mediapipe-pose-landmarker'].artifact_sha256 must be a SHA-256 digest",
+    "models['mediapipe-pose-landmarker'].artifact_size_bytes must be positive",
+    "models['mediapipe-pose-landmarker'].dataset_manifest_sha256 must be a SHA-256 digest",
+    "models['mediapipe-pose-landmarker'].export_sha256 must be a SHA-256 digest",
+    "models['mediapipe-pose-landmarker'].sbom_sha256 must be a SHA-256 digest",
+    "models['mediapipe-pose-landmarker'].rollback_target is required",
+    "models['mediapipe-hand-landmarker'].source.license disposition must be approved",
+    "models['mediapipe-hand-landmarker'].source.expected_sha256 must be a SHA-256 digest",
+    "models['mediapipe-hand-landmarker'].source.expected_size_bytes must be positive",
+    "models['mediapipe-hand-landmarker'].artifact_sha256 must be a SHA-256 digest",
+    "models['mediapipe-hand-landmarker'].artifact_size_bytes must be positive",
+    "models['mediapipe-hand-landmarker'].dataset_manifest_sha256 must be a SHA-256 digest",
+    "models['mediapipe-hand-landmarker'].export_sha256 must be a SHA-256 digest",
+    "models['mediapipe-hand-landmarker'].sbom_sha256 must be a SHA-256 digest",
+    "models['mediapipe-hand-landmarker'].rollback_target is required",
+    "models['siglip2-crop-head'].source.license disposition must be approved",
+    "models['siglip2-crop-head'].source.expected_sha256 must be a SHA-256 digest",
+    "models['siglip2-crop-head'].source.expected_size_bytes must be positive",
+    "models['siglip2-crop-head'].artifact_sha256 must be a SHA-256 digest",
+    "models['siglip2-crop-head'].artifact_size_bytes must be positive",
+    "models['siglip2-crop-head'].dataset_manifest_sha256 must be a SHA-256 digest",
+    "models['siglip2-crop-head'].export_sha256 must be a SHA-256 digest",
+    "models['siglip2-crop-head'].sbom_sha256 must be a SHA-256 digest",
+    "models['siglip2-crop-head'].rollback_target is required",
+    "models['lfm2-vl-reviewer'].source.license disposition must be approved",
+    "models['lfm2-vl-reviewer'].source.expected_sha256 must be a SHA-256 digest",
+    "models['lfm2-vl-reviewer'].source.expected_size_bytes must be positive",
+    "models['lfm2-vl-reviewer'].artifact_sha256 must be a SHA-256 digest",
+    "models['lfm2-vl-reviewer'].artifact_size_bytes must be positive",
+    "models['lfm2-vl-reviewer'].dataset_manifest_sha256 must be a SHA-256 digest",
+    "models['lfm2-vl-reviewer'].export_sha256 must be a SHA-256 digest",
+    "models['lfm2-vl-reviewer'].sbom_sha256 must be a SHA-256 digest",
+    "models['lfm2-vl-reviewer'].rollback_target is required",
+    "engines['peoplenet-transformer-fp16-rtx3090'].plan_sha256 must be a SHA-256 digest",
+    "engines['peoplenet-transformer-fp16-rtx3090'].model_sha256 must be a SHA-256 digest",
+    "engines['peoplenet-transformer-fp16-rtx3090'].export_sha256 must be a SHA-256 digest",
+    "engines['peoplenet-transformer-fp16-rtx3090'].input_contract_sha256 must be a SHA-256 digest",
+    "engines['peoplenet-transformer-fp16-rtx3090'].calibration_sha256 must be a SHA-256 digest",
+    "engines['peoplenet-transformer-fp16-rtx3090'].build_image_sha256 must be a SHA-256 digest",
+    "engines['siglip2-crop-head-fp16-rtx3090'].plan_sha256 must be a SHA-256 digest",
+    "engines['siglip2-crop-head-fp16-rtx3090'].model_sha256 must be a SHA-256 digest",
+    "engines['siglip2-crop-head-fp16-rtx3090'].export_sha256 must be a SHA-256 digest",
+    "engines['siglip2-crop-head-fp16-rtx3090'].input_contract_sha256 must be a SHA-256 digest",
+    "engines['siglip2-crop-head-fp16-rtx3090'].calibration_sha256 must be a SHA-256 digest",
+    "engines['siglip2-crop-head-fp16-rtx3090'].build_image_sha256 must be a SHA-256 digest",
+    "artifact root was not supplied; local model files cannot be verified",
+    "replay manifest is not sealed; metadata-only/synthetic packs cannot qualify",
+    "stream-01: source_kind is not an approved local replay",
+    "stream-01: clip_sha256 is missing or invalid",
+    "stream-01: source_path is missing"
+  ],
+  "fault_injection": {
+    "reason": "runtime not run",
+    "status": "not-run"
+  },
+  "generated_at": "2026-08-24T01:10:38.651746+00:00",
+  "host": {
+    "docker": {
+      "info": {
+        "argv": [
+          "docker",
+          "info",
+          "--format",
+          "server={{.ServerVersion}} default={{.DefaultRuntime}}"
+        ],
+        "duration_seconds": 0.076,
+        "returncode": 0,
+        "status": "passed",
+        "stderr_tail": "",
+        "stdout_tail": "server=28.3.3 default=runc\n"
+      },
+      "runtime_names": [
+        "io.containerd.runc.v2",
+        "nvidia",
+        "runc"
+      ],
+      "runtimes": {
+        "argv": [
+          "docker",
+          "info",
+          "--format",
+          "{{range $name, $_ := .Runtimes}}{{$name}} {{end}}"
+        ],
+        "duration_seconds": 0.038,
+        "returncode": 0,
+        "status": "passed",
+        "stderr_tail": "",
+        "stdout_tail": "io.containerd.runc.v2 nvidia runc \n"
+      }
+    },
+    "errors": [],
+    "gpu": {
+      "command": {
+        "argv": [
+          "nvidia-smi",
+          "--query-gpu=name,compute_cap,driver_version,memory.total",
+          "--format=csv,noheader,nounits"
+        ],
+        "duration_seconds": 0.018,
+        "returncode": 0,
+        "status": "passed",
+        "stderr_tail": "",
+        "stdout_tail": "NVIDIA GeForce RTX 3090, 8.6, 580.126.09, 24576\n"
+      },
+      "raw": "NVIDIA GeForce RTX 3090, 8.6, 580.126.09, 24576"
+    },
+    "status": "ready"
+  },
+  "image": {
+    "errors": [
+      "exact digest-pinned image is not imported"
+    ],
+    "image": "nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759",
+    "inspect": {
+      "argv": [
+        "docker",
+        "image",
+        "inspect",
+        "nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759",
+        "--format",
+        "{{json .RepoDigests}}"
+      ],
+      "duration_seconds": 0.01,
+      "returncode": 1,
+      "status": "failed",
+      "stderr_tail": "Error response from daemon: No such image: nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759\n",
+      "stdout_tail": "\n"
+    },
+    "pull": null,
+    "status": "blocked"
+  },
+  "models": {
+    "errors": [
+      "models['peoplenet-transformer'].source.license disposition must be approved",
+      "models['peoplenet-transformer'].source.expected_sha256 must be a SHA-256 digest",
+      "models['peoplenet-transformer'].source.expected_size_bytes must be positive",
+      "models['peoplenet-transformer'].artifact_sha256 must be a SHA-256 digest",
+      "models['peoplenet-transformer'].artifact_size_bytes must be positive",
+      "models['peoplenet-transformer'].parent_checkpoint is required",
+      "models['peoplenet-transformer'].dataset_manifest_sha256 must be a SHA-256 digest",
+      "models['peoplenet-transformer'].export_sha256 must be a SHA-256 digest",
+      "models['peoplenet-transformer'].sbom_sha256 must be a SHA-256 digest",
+      "models['peoplenet-transformer'].rollback_target is required",
+      "models['mediapipe-pose-landmarker'].source.license disposition must be approved",
+      "models['mediapipe-pose-landmarker'].source.expected_sha256 must be a SHA-256 digest",
+      "models['mediapipe-pose-landmarker'].source.expected_size_bytes must be positive",
+      "models['mediapipe-pose-landmarker'].artifact_sha256 must be a SHA-256 digest",
+      "models['mediapipe-pose-landmarker'].artifact_size_bytes must be positive",
+      "models['mediapipe-pose-landmarker'].dataset_manifest_sha256 must be a SHA-256 digest",
+      "models['mediapipe-pose-landmarker'].export_sha256 must be a SHA-256 digest",
+      "models['mediapipe-pose-landmarker'].sbom_sha256 must be a SHA-256 digest",
+      "models['mediapipe-pose-landmarker'].rollback_target is required",
+      "models['mediapipe-hand-landmarker'].source.license disposition must be approved",
+      "models['mediapipe-hand-landmarker'].source.expected_sha256 must be a SHA-256 digest",
+      "models['mediapipe-hand-landmarker'].source.expected_size_bytes must be positive",
+      "models['mediapipe-hand-landmarker'].artifact_sha256 must be a SHA-256 digest",
+      "models['mediapipe-hand-landmarker'].artifact_size_bytes must be positive",
+      "models['mediapipe-hand-landmarker'].dataset_manifest_sha256 must be a SHA-256 digest",
+      "models['mediapipe-hand-landmarker'].export_sha256 must be a SHA-256 digest",
+      "models['mediapipe-hand-landmarker'].sbom_sha256 must be a SHA-256 digest",
+      "models['mediapipe-hand-landmarker'].rollback_target is required",
+      "models['siglip2-crop-head'].source.license disposition must be approved",
+      "models['siglip2-crop-head'].source.expected_sha256 must be a SHA-256 digest",
+      "models['siglip2-crop-head'].source.expected_size_bytes must be positive",
+      "models['siglip2-crop-head'].artifact_sha256 must be a SHA-256 digest",
+      "models['siglip2-crop-head'].artifact_size_bytes must be positive",
+      "models['siglip2-crop-head'].dataset_manifest_sha256 must be a SHA-256 digest",
+      "models['siglip2-crop-head'].export_sha256 must be a SHA-256 digest",
+      "models['siglip2-crop-head'].sbom_sha256 must be a SHA-256 digest",
+      "models['siglip2-crop-head'].rollback_target is required",
+      "models['lfm2-vl-reviewer'].source.license disposition must be approved",
+      "models['lfm2-vl-reviewer'].source.expected_sha256 must be a SHA-256 digest",
+      "models['lfm2-vl-reviewer'].source.expected_size_bytes must be positive",
+      "models['lfm2-vl-reviewer'].artifact_sha256 must be a SHA-256 digest",
+      "models['lfm2-vl-reviewer'].artifact_size_bytes must be positive",
+      "models['lfm2-vl-reviewer'].dataset_manifest_sha256 must be a SHA-256 digest",
+      "models['lfm2-vl-reviewer'].export_sha256 must be a SHA-256 digest",
+      "models['lfm2-vl-reviewer'].sbom_sha256 must be a SHA-256 digest",
+      "models['lfm2-vl-reviewer'].rollback_target is required",
+      "engines['peoplenet-transformer-fp16-rtx3090'].plan_sha256 must be a SHA-256 digest",
+      "engines['peoplenet-transformer-fp16-rtx3090'].model_sha256 must be a SHA-256 digest",
+      "engines['peoplenet-transformer-fp16-rtx3090'].export_sha256 must be a SHA-256 digest",
+      "engines['peoplenet-transformer-fp16-rtx3090'].input_contract_sha256 must be a SHA-256 digest",
+      "engines['peoplenet-transformer-fp16-rtx3090'].calibration_sha256 must be a SHA-256 digest",
+      "engines['peoplenet-transformer-fp16-rtx3090'].build_image_sha256 must be a SHA-256 digest",
+      "engines['siglip2-crop-head-fp16-rtx3090'].plan_sha256 must be a SHA-256 digest",
+      "engines['siglip2-crop-head-fp16-rtx3090'].model_sha256 must be a SHA-256 digest",
+      "engines['siglip2-crop-head-fp16-rtx3090'].export_sha256 must be a SHA-256 digest",
+      "engines['siglip2-crop-head-fp16-rtx3090'].input_contract_sha256 must be a SHA-256 digest",
+      "engines['siglip2-crop-head-fp16-rtx3090'].calibration_sha256 must be a SHA-256 digest",
+      "engines['siglip2-crop-head-fp16-rtx3090'].build_image_sha256 must be a SHA-256 digest",
+      "artifact root was not supplied; local model files cannot be verified"
+    ],
+    "manifest_sha256": "d4cc8d867b1479ba4e22ff5f9ff0520bbfd7a1301729ac967f59f676046ad9f6",
+    "path": "/mnt/HDD2/proj_walnutek/tp_smoke_detect/.worktrees/feature/gpu-mandatory-release/.worktrees/feature/GPU-107-qualification/model-repository/manifest/model-release.json",
+    "status": "blocked"
+  },
+  "profile": "rtx3090",
+  "qualification_label": "unqualified",
+  "recovery_steps": [
+    "Import the exact digest-pinned DeepStream 7.0 Triton image and retain its SBOM/vulnerability disposition.",
+    "Provide approved local model files and complete model/engine hashes, licenses, lineage, calibration, and rollback receipts.",
+    "Replace the metadata-only replay pack with consented local clips, source_path values, immutable clip hashes, and qualification_state=sealed.",
+    "Run a reviewed runtime command that exercises NVDEC, all required model roles, Triton, CandidateProcessingService, audit persistence, and muted shadow audio.",
+    "Re-run GPU-107 one-stream, then the 20-stream two-hour gate and explicit timeout/OOM/stall/mismatch/reset injections."
+  ],
+  "replay": {
+    "errors": [
+      "replay manifest is not sealed; metadata-only/synthetic packs cannot qualify",
+      "stream-01: source_kind is not an approved local replay",
+      "stream-01: clip_sha256 is missing or invalid",
+      "stream-01: source_path is missing"
+    ],
+    "manifest_sha256": "cfde3fbacbcb70891f37bd66b9b6a9c6ea9ff31f978b878cc47e8b557a887bf1",
+    "path": "/mnt/HDD2/proj_walnutek/tp_smoke_detect/.worktrees/feature/gpu-mandatory-release/.worktrees/feature/GPU-107-qualification/tests/load/replay-pack.yaml",
+    "status": "blocked"
+  },
+  "requested_gate": {
+    "analysis_fps": 10.0,
+    "duration_hours": 0.0,
+    "real_runtime": false,
+    "streams": 1
+  },
+  "runtime": {
+    "reason": "prerequisites blocked",
+    "status": "not-run"
+  },
+  "schema_version": "gpu.qualification-receipt.v1",
+  "status": "blocked",
+  "telemetry": {
+    "reason": "prerequisites blocked",
+    "required_fields": [
+      "candidate_latency_ms",
+      "dropped_samples",
+      "gpu_utilization",
+      "memory_used_mib",
+      "nvdec_utilization",
+      "processed_samples",
+      "queue_age_ms",
+      "queue_depth",
+      "scheduled_samples"
+    ],
+    "sample_count": 0,
+    "status": "not-run"
+  },
+  "ticket": "GPU-107"
+}
