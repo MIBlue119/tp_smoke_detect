@@ -369,20 +369,133 @@ def replay_probe(
 
 
 def parse_telemetry(lines: Iterable[str]) -> dict[str, Any]:
+    """Parse only runtime-owned telemetry while retaining rejected rows.
+
+    A qualification command may read stdout from an arbitrary process, so a
+    JSON object containing convenient counters is not evidence.  The deployed
+    runtime emits ``gpu.telemetry.v1`` records with a process identity,
+    monotonic timestamp/sequence, cumulative counters, measurement samples,
+    model-role revisions, and an independently attested isolation receipt.
+    Legacy/direct rows remain visible for diagnostics but are explicitly
+    marked untrusted and can never qualify.
+    """
+
     rows: list[dict[str, Any]] = []
+    provenance_errors: list[str] = []
+    timestamp_errors: list[str] = []
+    trusted_count = 0
+    trusted_timestamps: dict[str, list[int]] = {}
+    required_counter_fields = {"scheduled_samples", "processed_samples", "dropped_samples"}
+    required_roles = set(REQUIRED_ROLES)
     for line in lines:
         try:
             value = json.loads(line)
         except (TypeError, ValueError, json.JSONDecodeError):
             continue
-        if isinstance(value, dict) and TELEMETRY_FIELDS.intersection(value):
-            rows.append(value)
+        if not isinstance(value, dict) or not (
+            TELEMETRY_FIELDS.intersection(value) or value.get("schema_version")
+        ):
+            continue
+        trusted = True
+        reasons: list[str] = []
+        if value.get("schema_version") != "gpu.telemetry.v1":
+            reasons.append("telemetry schema_version is not gpu.telemetry.v1")
+        if value.get("producer") != "tp-smoke-detect.gpu-runtime":
+            reasons.append("telemetry producer is not the deployed GPU runtime")
+        if not isinstance(value.get("receipt_id"), str) or not value["receipt_id"].strip():
+            reasons.append("telemetry receipt_id is missing")
+        if not isinstance(value.get("runtime_pid"), int) or value["runtime_pid"] <= 0:
+            reasons.append("telemetry runtime_pid is missing")
+        if not isinstance(value.get("sequence"), int) or value["sequence"] < 0:
+            reasons.append("telemetry sequence is missing")
+        timestamp = value.get("timestamp_ns")
+        if not isinstance(timestamp, int) or timestamp <= 0:
+            reasons.append("telemetry timestamp_ns is missing")
+        camera_id = str(value.get("camera_id", "")).strip()
+        if not camera_id:
+            reasons.append("telemetry camera_id is missing")
+        counters = value.get("counters")
+        if not isinstance(counters, dict):
+            reasons.append("telemetry cumulative counters are missing")
+            counters = {}
+        if not required_counter_fields.issubset(counters):
+            reasons.append("telemetry cumulative counters are incomplete")
+        measurements = value.get("measurements")
+        if not isinstance(measurements, list) or not measurements:
+            reasons.append("telemetry independent measurement samples are missing")
+            measurements = [value]
+        model_revisions = value.get("model_revisions")
+        if not isinstance(model_revisions, dict) or not required_roles.issubset(model_revisions):
+            reasons.append("telemetry model-role revisions are incomplete")
+        fault = value.get("fault_isolation")
+        if (
+            not isinstance(fault, dict)
+            or fault.get("status") != "passed"
+            or not str(fault.get("receipt_id", "")).strip()
+            or fault.get("producer") != "tp-smoke-detect.fault-harness"
+        ):
+            reasons.append("telemetry fault-isolation receipt is not independently attested")
+        if reasons:
+            trusted = False
+            provenance_errors.extend(reasons)
+        previous_timestamp: int | None = None
+        normalized: list[dict[str, Any]] = []
+        for measurement in measurements:
+            if not isinstance(measurement, dict):
+                trusted = False
+                provenance_errors.append("telemetry measurement sample is not an object")
+                continue
+            sample = dict(value)
+            sample.update(measurement)
+            for key, counter in counters.items():
+                if key in sample and sample[key] != counter:
+                    trusted = False
+                    provenance_errors.append(f"telemetry aggregate mismatch for {key}")
+                sample[key] = counter
+            sample["model_revisions"] = model_revisions
+            sample["fault_isolation"] = fault
+            sample["_trusted"] = trusted
+            sample["_measurement_timestamp_ns"] = sample.get("timestamp_ns")
+            sample["_measurement_sequence"] = sample.get("sequence")
+            measurement_timestamp = sample.get("timestamp_ns")
+            if not isinstance(measurement_timestamp, int) or measurement_timestamp <= 0:
+                trusted = False
+                provenance_errors.append("telemetry measurement timestamp_ns is missing")
+            elif previous_timestamp is not None and measurement_timestamp <= previous_timestamp:
+                trusted = False
+                timestamp_errors.append(f"{camera_id}: telemetry timestamps are not monotonic")
+            previous_timestamp = (
+                measurement_timestamp if isinstance(measurement_timestamp, int) else None
+            )
+            normalized.append(sample)
+        if trusted:
+            trusted_count += len(normalized)
+            if camera_id:
+                trusted_timestamps.setdefault(camera_id, []).extend(
+                    int(item["timestamp_ns"])
+                    for item in normalized
+                    if isinstance(item.get("timestamp_ns"), int)
+                )
+        rows.extend(normalized)
     summary: dict[str, Any] = {
         "samples": len(rows),
         "fields": sorted({key for row in rows for key in row}),
+        "provenance": {
+            "trusted_samples": trusted_count,
+            "trusted": trusted_count == len(rows) and len(rows) > 0,
+            "errors": sorted(set(provenance_errors)),
+        },
+        "timestamp_errors": sorted(set(timestamp_errors)),
+        "independent_sample_count": sum(
+            1 for row in rows if isinstance(row.get("_measurement_timestamp_ns"), int)
+        ),
     }
     for field in sorted(TELEMETRY_FIELDS):
-        values = [float(row[field]) for row in rows if isinstance(row.get(field), (int, float))]
+        values = [
+            float(row[field])
+            for row in rows
+            if isinstance(row.get(field), (int, float)) and not isinstance(row.get(field), bool)
+        ]
         if values:
             summary[field] = {
                 "min": min(values),
@@ -406,6 +519,17 @@ def parse_telemetry(lines: Iterable[str]) -> dict[str, Any]:
     camera_ids = {str(row["camera_id"]) for row in rows if row.get("camera_id")}
     if camera_ids:
         summary["camera_count"] = len(camera_ids)
+    role_revisions: dict[str, set[str]] = {}
+    for row in rows:
+        revisions = row.get("model_revisions")
+        if isinstance(revisions, dict):
+            for role, revision in revisions.items():
+                if str(revision).strip():
+                    role_revisions.setdefault(str(role), set()).add(str(revision).strip())
+    if role_revisions:
+        summary["model_revisions"] = {
+            role: sorted(revisions) for role, revisions in sorted(role_revisions.items())
+        }
     per_camera: dict[str, dict[str, Any]] = {}
     for camera_id in sorted(camera_ids):
         camera_rows = [row for row in rows if str(row.get("camera_id")) == camera_id]
@@ -415,7 +539,9 @@ def parse_telemetry(lines: Iterable[str]) -> dict[str, Any]:
         }
         for field in sorted(TELEMETRY_FIELDS):
             values = [
-                float(row[field]) for row in camera_rows if isinstance(row.get(field), (int, float))
+                float(row[field])
+                for row in camera_rows
+                if isinstance(row.get(field), (int, float)) and not isinstance(row.get(field), bool)
             ]
             if values:
                 camera_summary[field] = {
@@ -429,6 +555,17 @@ def parse_telemetry(lines: Iterable[str]) -> dict[str, Any]:
             ]
             if values:
                 camera_summary[field] = {"min": values[0], "max": values[-1]}
+        camera_roles: dict[str, set[str]] = {}
+        for row in camera_rows:
+            revisions = row.get("model_revisions")
+            if isinstance(revisions, dict):
+                for role, revision in revisions.items():
+                    if str(revision).strip():
+                        camera_roles.setdefault(str(role), set()).add(str(revision).strip())
+        if camera_roles:
+            camera_summary["model_revisions"] = {
+                role: sorted(revisions) for role, revisions in sorted(camera_roles.items())
+            }
         per_camera[camera_id] = camera_summary
     summary["cameras"] = per_camera
     latency_values = [
@@ -456,6 +593,25 @@ def evaluate_telemetry(
     """Evaluate measured values, not merely telemetry field names."""
 
     errors: list[str] = []
+    provenance = metrics.get("provenance", {})
+    if (
+        not isinstance(provenance, dict)
+        or provenance.get("trusted_samples") != metrics.get("samples")
+        or not provenance.get("trusted")
+    ):
+        errors.append("telemetry provenance is untrusted; runtime-owned receipts are required")
+    if metrics.get("timestamp_errors"):
+        errors.extend(str(item) for item in metrics["timestamp_errors"])
+    if metrics.get("independent_sample_count", 0) != metrics.get("samples", 0):
+        errors.append("telemetry independent measurement sample count does not match rows")
+    if (
+        not isinstance(metrics.get("external_gpu_samples"), list)
+        or not metrics["external_gpu_samples"]
+    ):
+        errors.append("independent host GPU telemetry samples are required")
+    model_revisions = metrics.get("model_revisions")
+    if not isinstance(model_revisions, dict) or not REQUIRED_ROLES.issubset(model_revisions):
+        errors.append("all required model-role revisions must be present in runtime telemetry")
     required = {
         "scheduled_samples",
         "processed_samples",
@@ -467,14 +623,13 @@ def evaluate_telemetry(
     missing = sorted(required - set(metrics.get("fields", [])))
     if missing:
         errors.append(f"real runtime telemetry is incomplete: missing {', '.join(missing)}")
-        return errors
     for field in required:
         value = metrics.get(field, {}).get("max")
         if not isinstance(value, (int, float)) or not value >= 0:
             errors.append(f"telemetry field {field} is not finite and non-negative")
-    scheduled = metrics["scheduled_samples"]["max"]
-    processed = metrics["processed_samples"]["max"]
-    dropped = metrics["dropped_samples"]["max"]
+    scheduled = metrics.get("scheduled_samples", {}).get("max", 0)
+    processed = metrics.get("processed_samples", {}).get("max", 0)
+    dropped = metrics.get("dropped_samples", {}).get("max", 0)
     if scheduled <= 0:
         errors.append("scheduled_samples must be positive")
     else:
@@ -560,7 +715,10 @@ def run_runtime(
                 output.append(line)
                 try:
                     value = json.loads(line)
-                    if isinstance(value, dict) and TELEMETRY_FIELDS.intersection(value):
+                    if isinstance(value, dict) and (
+                        TELEMETRY_FIELDS.intersection(value)
+                        or value.get("schema_version") == "gpu.telemetry.v1"
+                    ):
                         telemetry.append(value)
                 except (TypeError, ValueError, json.JSONDecodeError):
                     pass
@@ -577,6 +735,7 @@ def run_runtime(
             if len(parts) >= 4:
                 try:
                     gpu_sample = {
+                        "timestamp_ns": time.time_ns(),
                         "gpu_utilization": float(parts[0]),
                         "nvdec_utilization": float(parts[1]),
                         "memory_used_mib": float(parts[2]),
@@ -608,6 +767,7 @@ def run_runtime(
     )
     metrics = parse_telemetry(output)
     if gpu_samples:
+        metrics["external_gpu_samples"] = gpu_samples
         metrics["gpu_samples"] = gpu_samples
         metrics["gpu_utilization"] = {
             "min": min(row["gpu_utilization"] for row in gpu_samples),
@@ -679,11 +839,22 @@ def build_receipt(args: argparse.Namespace) -> tuple[dict[str, Any], list[Comman
             "requested": args.fault_injection,
             "result": "not-run: real runtime prerequisites are not satisfied",
         }
-        if args.real_runtime and not errors and args.runtime_command:
-            fault["result"] = "requires a runtime-specific injection command; no fault is inferred"
-            errors.append(
-                "fault injection was requested but no reviewed injection command was supplied"
+        if args.real_runtime and not errors and args.fault_runtime_command:
+            fault_command = args.fault_runtime_command.format(
+                image=args.image,
+                replay_manifest=str(args.replay_manifest),
+                model_manifest=str(args.model_manifest),
+                fault_injection=args.fault_injection,
             )
+            fault_result = run_command(shlex.split(fault_command), args.runtime_timeout)
+            all_commands.append(fault_result)
+            fault["status"] = "passed" if fault_result.status == "passed" else "failed"
+            fault["result"] = fault_result.as_dict()
+            if fault_result.status != "passed":
+                errors.append(f"fault-isolation command did not pass: {fault_result.status}")
+        elif args.real_runtime and not errors:
+            fault["result"] = "requires an independently attested fault-runtime command"
+            errors.append("fault injection requires --fault-runtime-command; no fault is inferred")
     status = "qualified" if not errors and runtime.get("status") == "passed" else "blocked"
     label = "gpu-lab-qualified" if status == "qualified" and args.streams == 20 else "unqualified"
     receipt: dict[str, Any] = {
@@ -758,8 +929,16 @@ def build_receipt(args: argparse.Namespace) -> tuple[dict[str, Any], list[Comman
             "tensorrt": runtime_identity,
             "triton": runtime_identity,
         }
+    signing_key = None
+    if args.receipt_signing_key_file:
+        try:
+            signing_key = args.receipt_signing_key_file.read_bytes()
+        except OSError as exc:
+            receipt["errors"].append(f"receipt signing key cannot be read: {exc}")
     if status == "qualified" and args.streams == 1:
-        receipt["one_stream"] = build_one_stream_receipt(receipt)
+        receipt["one_stream"] = build_one_stream_receipt(
+            receipt, signing_key=signing_key, signing_key_id=args.receipt_signing_key_id
+        )
     return receipt, all_commands
 
 
@@ -849,6 +1028,13 @@ def main() -> int:
             "gpu-reset",
         ],
     )
+    parser.add_argument(
+        "--fault-runtime-command",
+        help="independently attested fault command; placeholders include {fault_injection}",
+    )
+    parser.add_argument("--receipt-signing-key-file", type=Path)
+    parser.add_argument("--receipt-signing-key-id", default="gpu-qualification")
+    parser.add_argument("--one-stream-output", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--markdown-output", type=Path)
     args = parser.parse_args()
@@ -864,6 +1050,14 @@ def main() -> int:
     if args.markdown_output:
         args.markdown_output.parent.mkdir(parents=True, exist_ok=True)
         args.markdown_output.write_text(render_markdown(receipt), encoding="utf-8")
+    one_stream_output = args.one_stream_output
+    if one_stream_output is None and args.output is not None:
+        one_stream_output = args.output.with_name("one-stream-receipt.json")
+    if one_stream_output and isinstance(receipt.get("one_stream"), dict):
+        one_stream_output.parent.mkdir(parents=True, exist_ok=True)
+        one_stream_output.write_text(
+            json.dumps(receipt["one_stream"], indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     return 0 if receipt["status"] == "qualified" else 1
 
 

@@ -14,11 +14,30 @@ batched-push-timeout=40000
 [primary-gie]
 enable=1
 gie-unique-id=1
-config-file=/models/config/peoplenet-transformer-nvinfer.txt
+config-file=/opt/smoke-detect/deepstream/config/peoplenet-transformer.txt
 [tracker]
 enable=1
 tracker-width=640
 tracker-height=384
+# tp-smoke-detect runtime bindings.  media-publisher parses this section and
+# passes the paths/revisions to the graph; revisions are derived from the
+# mounted immutable manifest by media-entrypoint.
+[tp-smoke-detect]
+camera_id=camera-rtx3090-01
+tracker_config=/opt/smoke-detect/deepstream/config/nvdcf.txt
+pose_model_path=/models/mediapipe/pose_landmarker.task
+hand_model_path=/models/mediapipe/hand_landmarker.task
+crop_infer_config=/opt/smoke-detect/deepstream/config/siglip2-crop-nvinferserver.pbtxt
+manifest_revision=env:SMOKE_MANIFEST_REVISION
+artifact_revision=env:SMOKE_ARTIFACT_REVISION
+detector_model_revision=env:SMOKE_DETECTOR_MODEL_REVISION
+pose_model_revision=env:SMOKE_POSE_MODEL_REVISION
+hand_model_revision=env:SMOKE_HAND_MODEL_REVISION
+crop_model_revision=env:SMOKE_CROP_MODEL_REVISION
+camera_config_revision=env:SMOKE_CAMERA_CONFIG_REVISION
+candidate_topic=env:SMOKE_CANDIDATE_TOPIC
+broker_host=env:SMOKE_BROKER_HOST
+broker_port=env:SMOKE_BROKER_PORT
 [sink0]
 enable=0
 type=1

@@ -1,11 +1,13 @@
 #include "tp_smoke_detect/media/deepstream_pipeline.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <thread>
@@ -32,33 +34,61 @@ std::unordered_map<std::string, std::string> read_config(const std::string& path
   std::ifstream input(path);
   if (!input) throw std::runtime_error("cannot read media config: " + path);
   std::unordered_map<std::string, std::string> values;
+  std::string section;
   std::string line;
   while (std::getline(input, line)) {
     const auto comment = line.find('#');
     if (comment != std::string::npos) line.resize(comment);
-    const auto delimiter = line.find(':');
+    line = trim(line);
+    if (line.empty()) continue;
+    if (line.front() == '[' && line.back() == ']') {
+      section = trim(line.substr(1, line.size() - 2));
+      continue;
+    }
+    const auto equals = line.find('=');
+    const auto colon = line.find(':');
+    const auto delimiter = equals == std::string::npos
+                               ? colon
+                               : (colon == std::string::npos ? equals : std::min(equals, colon));
     if (delimiter == std::string::npos) continue;
     auto key = trim(line.substr(0, delimiter));
     auto value = trim(line.substr(delimiter + 1));
-    if (!key.empty() && !value.empty()) values[key] = value;
+    if (key.empty() || value.empty()) continue;
+    values[key] = value;
+    // The deployment file is a normal DeepStream INI document.  These
+    // aliases keep the broker publisher bound to the same source/GIE config
+    // that DeepStream loads while the tp-smoke-detect section supplies the
+    // three explicit GPU plugin paths and immutable revisions.
+    if (section == "source0" && key == "uri") values["source_uri"] = value;
+    if (section == "primary-gie" && key == "config-file") values["detector_config"] = value;
+    if (section == "tracker" && key == "ll-config-file") values["tracker_config"] = value;
   }
   return values;
+}
+
+std::string resolve(std::string value) {
+  constexpr std::string_view prefix = "env:";
+  if (value.starts_with(prefix)) {
+    const char* resolved = std::getenv(value.substr(prefix.size()).c_str());
+    return resolved == nullptr ? std::string{} : std::string{resolved};
+  }
+  return value;
 }
 
 std::string required(const std::unordered_map<std::string, std::string>& values,
                      const std::string& key) {
   const auto found = values.find(key);
-  if (found == values.end() || found->second.empty() || found->second == "unresolved" ||
-      found->second == "unknown") {
+  const auto value = found == values.end() ? std::string{} : resolve(found->second);
+  if (value.empty() || value == "unresolved" || value == "unknown") {
     throw std::runtime_error("media config requires bound " + key);
   }
-  return found->second;
+  return value;
 }
 
 std::string value_or(const std::unordered_map<std::string, std::string>& values,
                      const std::string& key, const std::string& fallback) {
   const auto found = values.find(key);
-  return found == values.end() ? fallback : found->second;
+  return found == values.end() ? fallback : resolve(found->second);
 }
 
 bool publish_qos1(const std::string& host, const std::string& port, const std::string& topic,

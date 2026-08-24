@@ -46,6 +46,7 @@ class MqttConsumerConfig:
     dead_letter_topic: str = "track.candidate.v1.dead-letter"
     max_inflight: int = 32
     retry_limit: int = 3
+    publish_timeout_seconds: float = 10.0
 
     def __post_init__(self) -> None:
         if not self.topic or not self.dead_letter_topic:
@@ -54,6 +55,8 @@ class MqttConsumerConfig:
             raise ValueError("max_inflight must be positive")
         if self.retry_limit < 0:
             raise ValueError("retry_limit must not be negative")
+        if self.publish_timeout_seconds <= 0:
+            raise ValueError("publish_timeout_seconds must be positive")
 
 
 class MqttCandidateConsumer:
@@ -244,15 +247,39 @@ class MqttCandidateConsumer:
         result = publish(
             self.config.topic, message.payload, qos=1, retain=False, properties=properties
         )
-        if not self._publish_succeeded(result):
+        if not self._publish_succeeded(result, timeout=self.config.publish_timeout_seconds):
             return
         self._ack_message(message)
 
     @staticmethod
-    def _publish_succeeded(result: Any) -> bool:
-        if result is None:
-            return True
-        return int(getattr(result, "rc", 0)) == 0
+    def _publish_succeeded(result: Any, *, timeout: float = 10.0) -> bool:
+        """Require the broker PUBACK, not merely local client queueing.
+
+        Paho's ``publish`` return code only reports that the message entered
+        the client queue.  A delivery must not be acknowledged (or moved to a
+        dead-letter topic) until the MQTTMessageInfo has observed PUBACK.
+        Test doubles can implement the same contract with ``wait_for_publish``
+        and ``is_published``; a bare ``None`` is deliberately a failure.
+        """
+
+        if result is None or int(getattr(result, "rc", 1)) != 0:
+            return False
+        wait_for_publish = getattr(result, "wait_for_publish", None)
+        is_published = getattr(result, "is_published", None)
+        if not callable(wait_for_publish):
+            return bool(is_published()) if callable(is_published) else False
+        try:
+            wait_for_publish(timeout=max(0.1, timeout))
+        except (RuntimeError, TimeoutError):
+            return False
+        if callable(is_published):
+            try:
+                return bool(is_published())
+            except (RuntimeError, TypeError):
+                return False
+        # Paho versions that expose wait_for_publish without is_published
+        # return None on success and raise on failure.
+        return True
 
     @staticmethod
     def _message_attempts(message: Any) -> int:
@@ -319,7 +346,7 @@ class MqttCandidateConsumer:
             }
         ).encode()
         result = publish(self.config.dead_letter_topic, payload, qos=1, retain=False)
-        if not self._publish_succeeded(result):
+        if not self._publish_succeeded(result, timeout=self.config.publish_timeout_seconds):
             return
         self._ack_message(message)
 

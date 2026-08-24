@@ -20,7 +20,10 @@ def receipt_sha256(value: Any) -> str:
 
 
 def build_one_stream_receipt(
-    qualification: dict[str, Any], *, signing_key: bytes | None = None
+    qualification: dict[str, Any],
+    *,
+    signing_key: bytes | None = None,
+    signing_key_id: str = "gpu-qualification",
 ) -> dict[str, Any]:
     """Derive the readiness receipt only from a successful qualification receipt.
 
@@ -31,10 +34,15 @@ def build_one_stream_receipt(
     source = json.loads(json.dumps(qualification, sort_keys=True))
     source_digest = receipt_sha256(source)
     ready = (
-        source.get("schema_version") == "gpu.qualification-receipt.v1"
+        signing_key is not None
+        and source.get("schema_version") == "gpu.qualification-receipt.v1"
         and source.get("status") == "qualified"
         and source.get("requested_gate", {}).get("streams") == 1
         and source.get("runtime", {}).get("status") == "passed"
+        and not source.get("errors")
+        and source.get("replay", {}).get("status") == "ready"
+        and source.get("telemetry", {}).get("provenance", {}).get("trusted") is True
+        and source.get("fault_injection", {}).get("status") == "passed"
     )
     result: dict[str, Any] = {
         "schema_version": "gpu.one-stream-receipt.v1",
@@ -50,6 +58,7 @@ def build_one_stream_receipt(
         "media_root_policy": source.get("replay", {}).get("media_root_policy"),
     }
     if signing_key:
+        result["signature_key_id"] = signing_key_id
         result["signature_hmac_sha256"] = hmac.new(
             signing_key, canonical_receipt_bytes(result), hashlib.sha256
         ).hexdigest()
@@ -64,6 +73,7 @@ def validate_one_stream_receipt(
     now: datetime | None = None,
     max_age: timedelta = timedelta(hours=24),
     signing_key: bytes | None = None,
+    signing_key_id: str = "gpu-qualification",
 ) -> list[str]:
     errors: list[str] = []
     if not isinstance(value, dict):
@@ -72,6 +82,8 @@ def validate_one_stream_receipt(
         errors.append("one-stream receipt schema_version is not gpu.one-stream-receipt.v1")
     if value.get("status") != "one-stream-ready":
         errors.append("one-stream receipt is not one-stream-ready")
+    if signing_key is None:
+        errors.append("one-stream receipt requires a trusted signing key")
     if manifest_sha256 is not None and value.get("manifest_sha256") != manifest_sha256:
         errors.append("one-stream receipt manifest hash does not match active manifest")
     if image_digest is not None and value.get("image_digest") != image_digest:
@@ -89,6 +101,14 @@ def validate_one_stream_receipt(
             errors.append("one-stream source receipt is not a one-stream qualification")
         if source.get("runtime", {}).get("status") != "passed":
             errors.append("one-stream source runtime did not pass")
+        if source.get("replay", {}).get("status") != "ready":
+            errors.append("one-stream source replay is not sealed and ready")
+        if source.get("errors"):
+            errors.append("one-stream source qualification contains errors")
+        if source.get("telemetry", {}).get("provenance", {}).get("trusted") is not True:
+            errors.append("one-stream source telemetry is not trusted runtime evidence")
+        if source.get("fault_injection", {}).get("status") != "passed":
+            errors.append("one-stream source fault-isolation evidence is missing")
         if value.get("source_qualification_sha256") != receipt_sha256(source):
             errors.append("one-stream source receipt hash does not match embedded lineage")
     source_schema = value.get("source_qualification_schema")
@@ -124,6 +144,8 @@ def validate_one_stream_receipt(
             errors.append("one-stream receipt generated_at is invalid")
     if signing_key is not None:
         signature = value.get("signature_hmac_sha256")
+        if value.get("signature_key_id") != signing_key_id:
+            errors.append("one-stream receipt signature key identity is invalid")
         unsigned = dict(value)
         unsigned.pop("signature_hmac_sha256", None)
         expected = hmac.new(

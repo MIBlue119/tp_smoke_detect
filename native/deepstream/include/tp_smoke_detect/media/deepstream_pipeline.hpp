@@ -41,6 +41,32 @@ struct DeepStreamPipelineConfig {
   std::vector<DeepStreamSourceConfig> sources;
 };
 
+// Stable metadata ABI between the explicit GPU plugins and this publisher.
+// Plugins attach one value per object to NvDsObjectMeta::obj_user_meta_list;
+// the pad probe accepts no ad-hoc strings or model prose.  The fixed-width
+// fields make the contract independent of the proprietary SDK allocator.
+enum class GpuRole : std::uint32_t { pose = 1, object = 2, smoke = 3 };
+
+struct GpuRoleOutputMeta {
+  static constexpr std::uint32_t kMagic = 0x5450534D;  // "TPSM"
+  static constexpr std::uint32_t kVersion = 1;
+  std::uint32_t magic{kMagic};
+  std::uint32_t version{kVersion};
+  GpuRole role{GpuRole::pose};
+  std::uint64_t object_id{0};
+  std::uint64_t source_pts_ns{0};
+  bool valid{false};
+  char model_revision[256]{};
+  char artifact_revision[256]{};
+  double confidence{0.0};
+  double hand_to_mouth_distance{0.0};
+  std::int32_t mouth_dwell_ms{0};
+  char object_label[32]{};
+  double object_confidence{0.0};
+  double smoke_score{0.0};
+  double ember_score{0.0};
+};
+
 struct DeepStreamReadiness {
   bool compiled{false};
   bool runtime_present{false};

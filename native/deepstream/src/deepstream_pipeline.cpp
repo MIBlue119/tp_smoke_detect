@@ -1,6 +1,8 @@
 #include "tp_smoke_detect/media/deepstream_pipeline.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <sstream>
 #include <utility>
@@ -193,6 +195,78 @@ void set_bool_property(GObject* object, const char* property, bool value) {
   }
 }
 
+struct RoleOutputs {
+  const GpuRoleOutputMeta* pose{nullptr};
+  const GpuRoleOutputMeta* object{nullptr};
+  const GpuRoleOutputMeta* smoke{nullptr};
+};
+
+bool bounded_string(const char* value, std::size_t capacity) {
+  if (value == nullptr || value[0] == '\0') return false;
+  for (std::size_t index = 0; index < capacity; ++index) {
+    if (value[index] == '\0') return true;
+  }
+  return false;
+}
+
+bool finite_unit(double value) { return std::isfinite(value) && value >= 0.0 && value <= 1.0; }
+
+const GpuRoleOutputMeta* find_role_output(NvDsObjectMeta* object, GpuRole expected,
+                                          std::uint64_t source_pts_ns) {
+  if (object == nullptr) return nullptr;
+  const GpuRoleOutputMeta* found = nullptr;
+  for (NvDsMetaList* node = object->obj_user_meta_list; node != nullptr; node = node->next) {
+    auto* user_meta = static_cast<NvDsUserMeta*>(node->data);
+    if (user_meta == nullptr || user_meta->user_meta_data == nullptr) continue;
+    auto* output = static_cast<const GpuRoleOutputMeta*>(user_meta->user_meta_data);
+    if (output->magic != GpuRoleOutputMeta::kMagic ||
+        output->version != GpuRoleOutputMeta::kVersion || output->role != expected ||
+        output->object_id != object->object_id || output->source_pts_ns != source_pts_ns ||
+        !output->valid || !bounded_string(output->model_revision, sizeof(output->model_revision)) ||
+        !bounded_string(output->artifact_revision, sizeof(output->artifact_revision))) {
+      continue;
+    }
+    // Duplicate role metadata is ambiguous and must fail closed rather than
+    // selecting whichever plugin happened to run first.
+    if (found != nullptr) return nullptr;
+    found = output;
+  }
+  return found;
+}
+
+bool role_outputs_complete(NvDsObjectMeta* object, std::uint64_t source_pts_ns,
+                           const DeepStreamPipelineConfig& config, RoleOutputs* outputs) {
+  if (outputs == nullptr) return false;
+  outputs->pose = find_role_output(object, GpuRole::pose, source_pts_ns);
+  outputs->object = find_role_output(object, GpuRole::object, source_pts_ns);
+  outputs->smoke = find_role_output(object, GpuRole::smoke, source_pts_ns);
+  if (outputs->pose == nullptr || outputs->object == nullptr || outputs->smoke == nullptr) {
+    return false;
+  }
+  const auto bound = [&](const GpuRoleOutputMeta* output, const std::string& revision) {
+    return std::string(output->model_revision) == revision &&
+           std::string(output->artifact_revision) == config.artifact_revision;
+  };
+  if (!bound(outputs->pose, config.pose_model_revision) ||
+      !bound(outputs->object, config.hand_model_revision) ||
+      !bound(outputs->smoke, config.crop_model_revision)) {
+    return false;
+  }
+  if (!finite_unit(outputs->pose->confidence) ||
+      !std::isfinite(outputs->pose->hand_to_mouth_distance) ||
+      outputs->pose->hand_to_mouth_distance < 0.0 || outputs->pose->mouth_dwell_ms < 0 ||
+      !bounded_string(outputs->object->object_label, sizeof(outputs->object->object_label)) ||
+      !finite_unit(outputs->object->object_confidence) ||
+      !finite_unit(outputs->smoke->smoke_score) || !finite_unit(outputs->smoke->ember_score)) {
+    return false;
+  }
+  constexpr const char* allowed_labels[] = {"cigarette", "vape", "phone", "cup", "food",
+                                            "pen_toothpick", "betel_quid", "background", "unknown"};
+  const std::string label(outputs->object->object_label);
+  return std::find(std::begin(allowed_labels), std::end(allowed_labels), label) !=
+         std::end(allowed_labels);
+}
+
 GstPadProbeReturn metadata_probe(GstPad*, GstPadProbeInfo* info, gpointer user_data) {
   auto* owner = static_cast<DeepStreamPipeline*>(user_data);
   if (info == nullptr || info->buffer == nullptr) return GST_PAD_PROBE_OK;
@@ -234,6 +308,7 @@ void DeepStreamPipeline::on_metadata_buffer(void* opaque_buffer) {
     if (frame->buf_pts == GST_CLOCK_TIME_NONE) continue;
     const auto width = frame->source_frame_width > 0 ? frame->source_frame_width : 0;
     const auto height = frame->source_frame_height > 0 ? frame->source_frame_height : 0;
+    if (width <= 0 || height <= 0) continue;
     for (NvDsMetaList* object_node = frame->obj_meta_list; object_node != nullptr;
          object_node = object_node->next) {
       auto* object = static_cast<NvDsObjectMeta*>(object_node->data);
@@ -257,15 +332,32 @@ void DeepStreamPipeline::on_metadata_buffer(void* opaque_buffer) {
       auto candidate = worker_.candidate(source->config.camera_id, sample, Clock::now());
       if (!candidate.has_value()) continue;
       candidate->producer = "tp-smoke-detect.deepstream7";
-      // This probe is installed after the complete detector -> tracker ->
-      // pose -> hands -> crop graph. Missing role output is represented as an
-      // unavailable receipt; it is never mislabeled as successful evidence.
+      RoleOutputs outputs;
+      // The graph position alone is not evidence.  Every role must attach the
+      // typed, correlated ABI metadata above; missing, duplicated, stale, or
+      // revision-mismatched plugin output is dropped before publication.
+      if (!role_outputs_complete(object, frame->buf_pts, config_, &outputs)) continue;
       candidate->stage = "completed";
-      candidate->quality.eligible = width > 0 && height > 0 && object->confidence > 0.0;
-      candidate->quality.eligibility_reason = candidate->quality.eligible
-                                                  ? "gpu_quality_gate_pending_role_receipts"
-                                                  : "missing_source_dimensions_or_confidence";
+      candidate->quality.eligible = object->confidence > 0.0;
+      candidate->quality.eligibility_reason = "gpu_role_outputs_joined";
       if (!candidate->quality.eligible) continue;
+      candidate->observations.has_pose = true;
+      candidate->observations.hand_to_mouth_distance = outputs.pose->hand_to_mouth_distance;
+      candidate->observations.mouth_dwell_ms = outputs.pose->mouth_dwell_ms;
+      candidate->observations.pose_confidence = outputs.pose->confidence;
+      candidate->observations.has_object = true;
+      candidate->observations.object_label = outputs.object->object_label;
+      candidate->observations.object_confidence = outputs.object->object_confidence;
+      candidate->observations.has_smoke = true;
+      candidate->observations.smoke_score = outputs.smoke->smoke_score;
+      candidate->observations.ember_score = outputs.smoke->ember_score;
+      if (candidate->observations.object_label == "cigarette" ||
+          candidate->observations.object_label == "vape") {
+        candidate->observations.independent_channels.push_back("object");
+      }
+      if (candidate->observations.smoke_score > 0.0 || candidate->observations.ember_score > 0.0) {
+        candidate->observations.independent_channels.push_back("smoke");
+      }
       candidate->inference_receipts = {
           InferenceReceipt{.role = "detector",
                            .status = "ok",
@@ -277,34 +369,43 @@ void DeepStreamPipeline::on_metadata_buffer(void* opaque_buffer) {
                            .output_schema = "detector.v1",
                            .deadline_outcome = "met"},
           InferenceReceipt{.role = "pose",
-                           .status = "unavailable",
-                           .reason_code = "not_ready",
+                           .status = "ok",
+                           .reason_code = "none",
                            .request_id = candidate->event_id,
                            .correlation_id = candidate->correlation_id,
                            .model_revision = config_.pose_model_revision,
                            .artifact_revision = config_.artifact_revision,
-                           .output_schema = "none",
-                           .deadline_outcome = "not_applicable"},
+                           .output_schema = "pose.v1",
+                           .deadline_outcome = "met",
+                           .score = outputs.pose->confidence,
+                           .has_score = true},
           InferenceReceipt{.role = "object",
-                           .status = "unavailable",
-                           .reason_code = "not_ready",
+                           .status = "ok",
+                           .reason_code = "none",
                            .request_id = candidate->event_id,
                            .correlation_id = candidate->correlation_id,
                            .model_revision = config_.hand_model_revision,
                            .artifact_revision = config_.artifact_revision,
-                           .output_schema = "none",
-                           .deadline_outcome = "not_applicable"},
+                           .output_schema = "object.v1",
+                           .deadline_outcome = "met",
+                           .score = outputs.object->object_confidence,
+                           .has_score = true},
           InferenceReceipt{.role = "smoke",
-                           .status = "unavailable",
-                           .reason_code = "not_ready",
+                           .status = "ok",
+                           .reason_code = "none",
                            .request_id = candidate->event_id,
                            .correlation_id = candidate->correlation_id,
                            .model_revision = config_.crop_model_revision,
                            .artifact_revision = config_.artifact_revision,
-                           .output_schema = "none",
-                           .deadline_outcome = "not_applicable"},
+                           .output_schema = "smoke.v1",
+                           .deadline_outcome = "met",
+                           .score = std::max(outputs.smoke->smoke_score, outputs.smoke->ember_score),
+                           .has_score = true},
       };
-      candidate->model_revisions = {{"detector", config_.detector_model_revision}};
+      candidate->model_revisions = {{"detector", config_.detector_model_revision},
+                                    {"pose", config_.pose_model_revision},
+                                    {"object", config_.hand_model_revision},
+                                    {"smoke", config_.crop_model_revision}};
       publisher_.enqueue(*candidate);
       if (candidate_callback_) publisher_.flush(candidate_callback_);
     }
