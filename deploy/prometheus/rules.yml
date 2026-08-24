@@ -2,21 +2,61 @@ groups:
   - name: smoke-detect-operations
     rules:
       - alert: SmokeDetectCameraStale
-        expr: time() - smoke_camera_last_good_frame_timestamp_seconds > 30
+        expr: smoke_camera_stale_count > 0
         for: 2m
         labels:
           severity: warning
         annotations:
           summary: Camera stream is stale
-          description: A configured camera has not produced a good frame for two minutes.
+          description: One or more configured camera streams exceeded the freshness deadline; inspect the per-camera ready snapshot.
       - alert: SmokeDetectQueueBacklog
-        expr: smoke_camera_queue_depth > 24
+        expr: smoke_camera_queue_depth > 24 or smoke_camera_queue_age_seconds > 2
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: Camera queue is approaching its bound
-          description: A camera queue is above 75 percent of the CPU profile bound.
+          description: Camera work is queued beyond the bounded depth or age budget; new candidates must remain fail-closed.
+      - alert: SmokeDetectGpuReadinessLost
+        expr: sum(smoke_model_readiness{state=~"ready|healthy"}) == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: GPU model readiness lost
+          description: No GPU model role is ready; degraded decisions must not request automatic audio.
+      - alert: SmokeDetectGpuMemoryPressure
+        expr: smoke_gpu_memory_pressure > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: GPU memory pressure
+          description: GPU memory is above the configured safety threshold; isolate the affected model role.
+      - alert: SmokeDetectGpuSampleLoss
+        expr: increase(smoke_camera_sample_loss_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Camera samples were dropped
+          description: Scheduled analysis samples were not processed; inspect queue, decoder, and model health.
+      - alert: SmokeDetectGpuInferenceFailures
+        expr: increase(smoke_inference_failures_total{status=~"failed|timeout|unavailable|other"}[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: GPU inference failures detected
+          description: A bounded model role reported an inference failure or timeout; incomplete evidence is rejected.
+      - alert: SmokeDetectComponentRestartLoop
+        expr: increase(smoke_process_restarts_total[10m]) >= 3
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: GPU/media component restart loop
+          description: A bounded component restarted repeatedly; healthy cameras and the core must remain isolated.
       - alert: SmokeDetectDependencyDegraded
         expr: increase(smoke_degraded_transitions_total[10m]) > 0
         labels:
