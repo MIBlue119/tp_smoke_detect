@@ -10,10 +10,13 @@ ignored local artifact root.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.metadata
 import json
 import os
 import platform
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, cast
@@ -23,6 +26,8 @@ from ml.demo.annotate import render_video, write_receipt
 from ml.demo.contracts import (
     DEMO_SCHEMA_VERSION,
     DemoRunReceipt,
+    EventState,
+    FrameEvidence,
     ModelReceipt,
     RightsDisposition,
     SourceReceipt,
@@ -50,6 +55,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--model-root", type=Path, required=True)
+    parser.add_argument("--boundary-receipt", type=Path, required=True)
+    parser.add_argument("--manual-review", type=Path, required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--max-frames", type=int, default=None)
@@ -101,32 +108,74 @@ def _ffmpeg_version() -> str:
     return result.stdout.splitlines()[0] if result.stdout else "unknown"
 
 
-def _manual_review(
-    frames: tuple[Any, ...], events: tuple[Any, ...], fps: float
-) -> list[dict[str, Any]]:
-    """Create fixed review anchors; judgments are filled by the human reviewer."""
+def _load_manual_review(path: Path, run_id: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Load a completed immutable review; never publish pending placeholders."""
 
-    anchors = {
-        frame.frame_index for frame in frames if frame.frame_index % max(1, round(fps * 2)) == 0
+    review = _load_json(path)
+    if review.get("run_id") != run_id:
+        raise RuntimeError("manual review run_id does not match the requested run")
+    judgments = review.get("judgments")
+    if not isinstance(judgments, list) or not judgments:
+        raise RuntimeError("manual review must contain at least one completed judgment")
+    allowed = {"true_candidate", "false_candidate", "visible_miss", "unclear"}
+    normalized: list[dict[str, Any]] = []
+    for item in judgments:
+        if not isinstance(item, dict) or item.get("judgment") not in allowed:
+            raise RuntimeError("manual review contains a missing or pending judgment")
+        normalized.append(
+            {
+                key: item[key]
+                for key in ("event_id", "frame_index", "judgment", "reason")
+                if key in item
+            }
+        )
+    return normalized, review
+
+
+def _environment_receipt() -> dict[str, Any]:
+    """Capture a path-independent, package/SBOM receipt for the actual runner."""
+
+    names = (
+        "av",
+        "jsonschema",
+        "opencv-python-headless",
+        "Pillow",
+        "torch",
+        "ultralytics",
+    )
+    packages: dict[str, str] = {}
+    for name in names:
+        try:
+            packages[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            packages[name] = "missing"
+    try:
+        import torch
+
+        packages["torch"] = str(torch.__version__)
+    except ImportError:
+        pass
+    payload: dict[str, Any] = {
+        "schema_version": "demo.python-runtime-receipt.v1",
+        "python": sys.version.split()[0],
+        "executable_basename": Path(sys.executable).name,
+        "packages": packages,
+        "sbom": "python-distribution-version-receipt",
     }
-    for event in events:
-        for timestamp in (event.start_pts_ns, event.end_pts_ns):
-            anchors.add(round(timestamp / 1_000_000_000 * fps))
-    return [
-        {
-            "frame_index": index,
-            "judgment": "unclear",
-            "reason": "fixed sample pending manual visual review; raw model output is unchanged",
-        }
-        for index in sorted(anchors)
-    ]
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    payload["receipt_sha256"] = hashlib.sha256(canonical).hexdigest()
+    return payload
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     acquisition = _load_json(args.acquisition_receipt)
     config = _load_json(args.config)
+    boundary = _load_json(args.boundary_receipt)
+    if boundary.get("status") != "passed":
+        raise RuntimeError("checkpoint boundary receipt is not passed")
     source = _source_receipt(acquisition)
     models = _model_receipts(acquisition)
+    manual_review, review_payload = _load_manual_review(args.manual_review, args.run_id)
     if source.sha256 != sha256_file(args.source) or source.byte_size != args.source.stat().st_size:
         raise RuntimeError("source does not match the sealed acquisition receipt")
     validate_video_file(args.source, source)
@@ -153,17 +202,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     runtime = runtime_receipt(args.device)
 
     try:
-        import cv2  # type: ignore[import-not-found]
+        import av
     except ImportError as exc:
-        raise RuntimeError("OpenCV is required in the isolated GPU runtime") from exc
-    capture = cv2.VideoCapture(str(args.source))
-    if not capture.isOpened():
-        raise RuntimeError("OpenCV could not decode the sealed source")
-    fps = float(capture.get(cv2.CAP_PROP_FPS))
-    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        raise RuntimeError("PyAV is required in the pinned isolated GPU runtime") from exc
+    container = av.open(str(args.source))
+    stream = container.streams.video[0]
+    fps = float(stream.average_rate or stream.base_rate or 0)
+    width, height = int(stream.codec_context.width), int(stream.codec_context.height)
     if fps <= 0 or width <= 0 or height <= 0:
         raise RuntimeError("source decoder returned invalid dimensions or frame rate")
+    time_base = stream.time_base
 
     fusion_config = FusionConfig(
         config_revision=str(config["config_revision"]),
@@ -181,12 +229,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     frame_count = 0
     started = time.perf_counter()
     try:
-        while True:
-            ok, frame = capture.read()
-            if not ok:
-                break
+        for decoded in container.decode(video=0):
             if args.max_frames is not None and frame_count >= args.max_frames:
                 break
+            frame = decoded.to_ndarray(format="bgr24")
             pose_output = pose.infer(frame)
             cigarette_output = cigarette.infer(frame)
             persons = tuple(
@@ -198,22 +244,43 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 CigaretteDetection(item.box, item.confidence, index)
                 for index, item in enumerate(cigarette_output.detections)
             )
-            pts_ns = round(frame_count * 1_000_000_000 / fps)
+            if decoded.pts is not None and decoded.time_base is not None:
+                pts_ns = round(float(decoded.pts * decoded.time_base) * 1_000_000_000)
+            elif time_base is not None and decoded.pts is not None:
+                pts_ns = round(float(decoded.pts * time_base) * 1_000_000_000)
+            else:
+                pts_ns = round(frame_count * 1_000_000_000 / fps)
+            frame_evidence = fusion.process_frame(
+                FrameDetections(
+                    frame_index=frame_count,
+                    source_pts_ns=pts_ns,
+                    persons=persons,
+                    cigarettes=cigarettes,
+                )
+            )
             evidence.extend(
-                fusion.process_frame(
-                    FrameDetections(
-                        frame_index=frame_count,
-                        source_pts_ns=pts_ns,
-                        persons=persons,
-                        cigarettes=cigarettes,
-                    )
+                frame_evidence
+                or (
+                    FrameEvidence(
+                        frame_count,
+                        pts_ns,
+                        None,
+                        None,
+                        (),
+                        None,
+                        None,
+                        None,
+                        None,
+                        EventState.INSUFFICIENT_EVIDENCE,
+                        ("missing_pose",),
+                    ),
                 )
             )
             frame_count += 1
             if frame_count % 100 == 0:
                 print(f"processed {frame_count} frames", flush=True)
     finally:
-        capture.release()
+        container.close()
     closed = fusion.process(())
     result = FusionResult(tuple(evidence), closed.events)
     elapsed = time.perf_counter() - started
@@ -233,12 +300,40 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         config_sha256=config_hash,
         frames=tuple(result.frames),
         events=tuple(result.events),
-        manual_review=tuple(_manual_review(result.frames, result.events, fps)),
+        manual_review=tuple(manual_review),
     )
     annotation_payload = run_receipt.to_dict()
     atomic_write_json(annotation_path, annotation_payload)
     media_receipt = render_video(args.source, annotation_path, output_video)
     write_receipt(media_receipt_path, media_receipt)
+    # The review is immutable companion evidence.  It is copied only after
+    # the output hash exists, so the final manifest can bind all three files.
+    review_payload = dict(review_payload)
+    review_payload["annotation_sha256"] = sha256_file(annotation_path)
+    review_payload["video_sha256"] = media_receipt.output_sha256
+    review_payload["contact_sheet_artifact_id"] = "contact-sheet.jpg"
+    review_path = output_root / "manual-review.json"
+    atomic_write_json(review_path, review_payload)
+    contact_sheet = output_root / "contact-sheet.jpg"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(output_video),
+            "-vf",
+            "fps=1/2,scale=320:-1,tile=5x5",
+            "-frames:v",
+            "1",
+            str(contact_sheet),
+        ],
+        check=True,
+    )
+    environment = _environment_receipt()
+    environment_path = output_root / "runtime-receipt.json"
+    atomic_write_json(environment_path, environment)
     manifest = {
         "schema_version": "demo.run-manifest.v1",
         "run_id": args.run_id,
@@ -247,6 +342,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "source_sha256": source.sha256,
         "annotation_artifact_id": "annotation.json",
         "annotation_sha256": sha256_file(annotation_path),
+        "manual_review_artifact_id": "manual-review.json",
+        "manual_review_sha256": sha256_file(review_path),
+        "contact_sheet_artifact_id": "contact-sheet.jpg",
+        "contact_sheet_sha256": sha256_file(contact_sheet),
         "output_artifact_id": "annotated.mp4",
         "output_sha256": media_receipt.output_sha256,
         "output_bytes": media_receipt.output_bytes,
@@ -266,9 +365,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "host": platform.node(),
         "ffmpeg": _ffmpeg_version(),
         "config_sha256": config_hash,
+        "checkpoint_boundary_artifact_id": args.boundary_receipt.name,
+        "checkpoint_boundary_sha256": sha256_file(args.boundary_receipt),
+        "runtime_receipt_artifact_id": "runtime-receipt.json",
+        "runtime_receipt_sha256": sha256_file(environment_path),
         "notes": [
             "Baseline demo only; not production qualified.",
-            "Manual review anchors are initialized to unclear and must be reconciled by a human.",
+            "Manual review is a completed immutable companion; "
+            "judgments are not pending placeholders.",
             "No production decision, audio request, identity inference, or remote inference "
             "was created.",
         ],

@@ -35,3 +35,23 @@ def test_partial_annotation_is_rejected_before_media_work(tmp_path: Path) -> Non
     annotation.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(AnnotationError, match="real CUDA"):
         load_annotation(annotation)
+
+
+def test_checked_in_schema_rejects_missing_required_field(tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    annotation = _annotation(source)
+    payload = json.loads(annotation.read_text(encoding="utf-8"))
+    del payload["models"]
+    annotation.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(AnnotationError, match="schema:  'models' is a required property"):
+        load_annotation(annotation)
+
+
+def test_checked_in_schema_rejects_additional_property(tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    annotation = _annotation(source)
+    payload = json.loads(annotation.read_text(encoding="utf-8"))
+    payload["unexpected"] = True
+    annotation.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(AnnotationError, match="schema:  Additional properties are not allowed"):
+        load_annotation(annotation)

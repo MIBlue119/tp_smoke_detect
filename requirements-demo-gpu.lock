@@ -1,0 +1,9 @@
+# Exact demo runtime pins. Install in a dedicated environment, not a sibling
+# worktree .venv; observed versions are recorded in each run receipt.
+av==15.0.0
+jsonschema==4.25.1
+numpy==2.4.4
+opencv-python-headless==4.13.0.92
+Pillow==12.2.0
+torch==2.9.1+cu128
+ultralytics==8.3.0

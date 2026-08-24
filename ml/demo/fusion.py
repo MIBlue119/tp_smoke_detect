@@ -421,6 +421,31 @@ class DeterministicFusion:
                 )
                 continue
             score, cigarette = selected_item
+            # Hysteresis is deliberate: an inactive track enters only at the
+            # higher entry threshold; an active track remains positive only
+            # while it meets the lower exit threshold.  A low score is
+            # evidence, but never a candidate, and is allowed to close after
+            # the same bounded gap as an occlusion.
+            if state.active and score < self.config.exit_confidence:
+                state.missing_frames += 1
+                if state.missing_frames > self.config.exit_gap_frames:
+                    self._close(person_track_id, ("associated_cigarette", "below_threshold"))
+                output.append(
+                    FrameEvidence(
+                        frame.frame_index,
+                        frame.source_pts_ns,
+                        person_track_id,
+                        person.box,
+                        person.keypoints,
+                        cigarette.box,
+                        person.confidence,
+                        cigarette.confidence,
+                        score,
+                        EventState.UNCLEAR,
+                        ("below_threshold",),
+                    )
+                )
+                continue
             state.missing_frames = 0
             state.positive_frames += 1
             if (

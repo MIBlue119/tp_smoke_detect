@@ -1,0 +1,19 @@
+{
+  "schema_version": "demo.remediation-receipt.v1",
+  "ticket": "DEMO-205",
+  "run_id": "shibuya-GByZa0qbA8A-r1",
+  "runtime": "NVIDIA GeForce RTX 3090 / CUDA 12.8 / PyTorch 2.9.1+cu128",
+  "frames": 1248,
+  "duration_seconds": 41.6416,
+  "event_count": 0,
+  "output_bytes": 10899217,
+  "output_sha256": "b6ce94c632bb0e4eecda2bb5e2e3aa41b686d719c73d563d3d22a94e163db7cd",
+  "annotation_sha256": "fac3892cdde56b1eee8d8fe3a0a8b5a045622df8801ca5f2412a2390bc6d6631",
+  "manual_review_sha256": "bd1ce9faca78707483d7878c24b038cd14d80c23ffd982dae147cb1d73f7ffd0",
+  "contact_sheet_sha256": "50345ddf0c8fecdbe818e42b8b1b7fde7215f8f4a641276f9c1435fb0a74e1dc",
+  "boundary_receipt_sha256": "a7b2de425ceb11b6d2c591a487287b314f2f13cfe056dca89313936c221818fc",
+  "boundary_image_id": "sha256:3eb2c8dcbbffe59cb969690c6b48af7e72dde6d0a8a484995c841764902cf2b9",
+  "manual_review": "21 completed unclear anchors; no pending placeholders",
+  "production_qualified": false,
+  "follow_up": "Only consider RT-DETR research after a broader labelled evaluation demonstrates visible misses; do not train on this clip."
+}

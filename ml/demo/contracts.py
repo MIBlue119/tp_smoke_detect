@@ -12,6 +12,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -283,6 +284,24 @@ def validate_video_annotation(payload: Mapping[str, Any]) -> tuple[str, ...]:
     """
 
     errors: list[str] = []
+    # The checked-in JSON Schema is the publication gate.  Keep the import
+    # lazy so CPU service consumers that never use the private demo do not pay
+    # for the validator at import time.
+    try:
+        from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+
+        schema_path = Path(__file__).resolve().parents[2] / "schemas/demo/video-annotation.v1.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        schema_errors = sorted(
+            Draft202012Validator(schema).iter_errors(dict(payload)),
+            key=lambda error: list(error.absolute_path),
+        )
+        errors.extend(
+            "schema: " + ".".join(str(part) for part in error.absolute_path) + " " + error.message
+            for error in schema_errors
+        )
+    except (ImportError, OSError, json.JSONDecodeError) as exc:
+        errors.append(f"schema validator unavailable: {exc}")
     if payload.get("schema_version") != DEMO_SCHEMA_VERSION:
         errors.append("schema_version must be demo.video-annotation.v1")
     for forbidden in ("raw_pixels", "credentials", "absolute_host_path", "model_prose"):

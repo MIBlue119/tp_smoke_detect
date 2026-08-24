@@ -19,6 +19,7 @@ dependencies = [
   "PyYAML>=6.0,<7",
   "cryptography>=50,<51",
   "Pillow>=11,<13",
+  "jsonschema>=4.23,<5",
 ]
 
 [project.scripts]
