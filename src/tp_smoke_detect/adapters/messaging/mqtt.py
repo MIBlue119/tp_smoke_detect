@@ -12,6 +12,7 @@ import logging
 import queue
 import threading
 from collections.abc import Callable
+from copy import copy
 from dataclasses import dataclass
 from typing import Any
 
@@ -212,10 +213,12 @@ class MqttCandidateConsumer:
 
         def on_message(_client: Any, _userdata: Any, message: Any) -> None:
             ack = getattr(message, "ack", lambda: None)
+            attempts = self._message_attempts(message)
             delivery = MqttDelivery(
                 payload=message.payload,
                 topic=str(message.topic),
                 message_id=str(getattr(message, "mid", "")),
+                attempts=attempts,
                 ack=ack,
                 retry=lambda attempt: self._republish(message, attempt),
                 dead_letter=lambda reason: self._dead_letter(message, reason),
@@ -232,12 +235,52 @@ class MqttCandidateConsumer:
         publish = getattr(self.client, "publish", None)
         if not callable(publish):
             return
-        properties = getattr(message, "properties", None)
-        publish(self.config.topic, message.payload, qos=1, retain=False, properties=properties)
+        properties = self._with_attempt(getattr(message, "properties", None), attempt)
+        result = publish(
+            self.config.topic, message.payload, qos=1, retain=False, properties=properties
+        )
+        if not self._publish_succeeded(result):
+            return
         ack = getattr(message, "ack", None)
         if callable(ack):
             ack()
-        del attempt
+
+    @staticmethod
+    def _publish_succeeded(result: Any) -> bool:
+        if result is None:
+            return True
+        return int(getattr(result, "rc", 0)) == 0
+
+    @staticmethod
+    def _message_attempts(message: Any) -> int:
+        direct = getattr(message, "attempts", None)
+        if isinstance(direct, int) and direct >= 0:
+            return direct
+        properties = getattr(message, "properties", None)
+        for key, value in getattr(properties, "UserProperty", ()) or ():
+            if str(key) == "x-smoke-delivery-attempt":
+                try:
+                    return max(0, int(value))
+                except (TypeError, ValueError):
+                    return 0
+        return 0
+
+    @staticmethod
+    def _with_attempt(properties: Any, attempt: int) -> Any:
+        if properties is None:
+            return properties
+        cloned = copy(properties)
+        user_properties = [
+            (str(key), str(value))
+            for key, value in (getattr(cloned, "UserProperty", ()) or ())
+            if str(key) != "x-smoke-delivery-attempt"
+        ]
+        user_properties.append(("x-smoke-delivery-attempt", str(attempt)))
+        try:
+            cloned.UserProperty = user_properties
+        except (AttributeError, TypeError):
+            return properties
+        return cloned
 
     def _dead_letter(self, message: Any, reason: str) -> None:
         publish = getattr(self.client, "publish", None)
@@ -255,7 +298,9 @@ class MqttCandidateConsumer:
                 "message_id": str(getattr(message, "mid", "")),
             }
         ).encode()
-        publish(self.config.dead_letter_topic, payload, qos=1, retain=False)
+        result = publish(self.config.dead_letter_topic, payload, qos=1, retain=False)
+        if not self._publish_succeeded(result):
+            return
         ack = getattr(message, "ack", None)
         if callable(ack):
             ack()

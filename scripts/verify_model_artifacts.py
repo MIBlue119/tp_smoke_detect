@@ -112,7 +112,7 @@ def main() -> int:
         elif verification.status != "verified":
             errors.extend(f"{model.artifact_id}: {error}" for error in verification.errors)
     for engine in manifest.engines:
-        engine_errors = list(engine.validate())
+        engine_errors = list(engine.validate(plan_root=artifact_root))
         receipt["engines"].append(
             {
                 "engine_id": engine.engine_id,

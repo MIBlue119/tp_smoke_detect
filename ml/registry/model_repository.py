@@ -286,6 +286,7 @@ class EngineBinding:
         *,
         artifact_hash: str | None = None,
         export_hash: str | None = None,
+        plan_root: Path | None = None,
         prefix: str = "engine",
     ) -> tuple[str, ...]:
         errors: list[str] = []
@@ -318,6 +319,18 @@ class EngineBinding:
             errors.append(f"{prefix}.model_sha256 does not match model artifact")
         if export_hash is not None and self.export_sha256 != export_hash:
             errors.append(f"{prefix}.export_sha256 does not match model export")
+        if plan_root is not None:
+            plan_path = plan_root / self.plan_filename
+            try:
+                resolved_root = plan_root.resolve()
+                resolved_plan = plan_path.resolve()
+                resolved_plan.relative_to(resolved_root)
+                if not resolved_plan.is_file():
+                    errors.append(f"{prefix}.plan_filename is missing from the artifact root")
+                elif _hash_file(resolved_plan) != self.plan_sha256:
+                    errors.append(f"{prefix}.plan_sha256 does not match local TensorRT plan bytes")
+            except (OSError, ValueError) as exc:
+                errors.append(f"{prefix}.plan_filename cannot be verified: {exc}")
         return tuple(dict.fromkeys(errors))
 
     def to_dict(self) -> dict[str, Any]:

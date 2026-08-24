@@ -30,6 +30,9 @@ services:
       SMOKE_DETECT_ARTIFACT_ROOT: /var/lib/smoke-detect/artifacts
       SMOKE_DETECT_POLICY_CONFIG: /etc/smoke-detect/policy.yaml
       SMOKE_DETECT_CAMERAS_CONFIG: /etc/smoke-detect/cameras.yaml
+      # The API is the CPU control plane; the GPU candidate-consumer owns the
+      # active model-manifest binding and is the only live candidate consumer.
+      SMOKE_DETECT_CANDIDATE__REQUIRE_GPU_RECEIPTS: "false"
     ports:
       - "127.0.0.1:${SMOKE_CORE_PORT:-8000}:8000"
     networks: [site_net, gpu_net]
@@ -202,7 +205,13 @@ services:
 
   media-gpu:
     profiles: [gpu-rtx3090]
-    image: ${SMOKE_GPU_MEDIA_IMAGE:-nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.media
+      target: deepstream
+      args:
+        DEEPSTREAM_IMAGE: ${SMOKE_GPU_BASE_IMAGE:-nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759}
+    image: ${SMOKE_GPU_MEDIA_IMAGE:-tp-smoke-detect/media:0.1.0-gpu}
     restart: unless-stopped
     init: true
     read_only: true
@@ -218,7 +227,7 @@ services:
       SMOKE_MODEL_MANIFEST: /models/manifest/model-release.json
       SMOKE_GPU_READINESS_RECEIPT: /run/smoke-detect/gpu-readiness.json
       SMOKE_GPU_MEDIA_CONFIG: /etc/smoke-detect/deepstream/config.txt
-      SMOKE_GPU_MEDIA_EXECUTABLE: ${SMOKE_GPU_MEDIA_EXECUTABLE:-deepstream-app}
+      SMOKE_GPU_MEDIA_EXECUTABLE: ${SMOKE_GPU_MEDIA_EXECUTABLE:-/opt/smoke-detect/bin/media-publisher}
     volumes:
       - ./../model-repository:/models:ro
       - ./../docs/dev_artifacts/qualification:/run/smoke-detect:ro
@@ -257,10 +266,12 @@ services:
     environment:
       SMOKE_DETECT_POLICY_CONFIG: /etc/smoke-detect/policy.yaml
       SMOKE_DETECT_CAMERAS_CONFIG: /etc/smoke-detect/cameras.yaml
+      SMOKE_MODEL_MANIFEST: /models/manifest/model-release.json
     volumes:
       - smoke_state:/var/lib/smoke-detect/state
       - smoke_artifacts:/var/lib/smoke-detect/artifacts
       - gpu_runtime_state:/run/gpu-state
+      - ./../model-repository:/models:ro
       - ./../configs/runtime.gpu-rtx3090.yaml:/etc/smoke-detect/runtime.yaml:ro
       - ./../configs/policy.example.yaml:/etc/smoke-detect/policy.yaml:ro
       - ./../configs/camera.example.yaml:/etc/smoke-detect/cameras.yaml:ro
@@ -275,7 +286,7 @@ services:
         condition: service_healthy
     networks: [gpu_net]
     healthcheck:
-      test: [CMD-SHELL, test -r /run/smoke-detect/candidate-ready]
+      test: [CMD-SHELL, test -r /run/gpu-state/candidate-ready]
       interval: 10s
       timeout: 3s
       retries: 6
@@ -306,9 +317,13 @@ services:
     environment:
       SMOKE_GPU_READINESS_RECEIPT: /run/smoke-detect/gpu-readiness.json
       SMOKE_GPU_CANDIDATE_READY_FILE: /run/gpu-state/candidate-ready
+      SMOKE_MODEL_MANIFEST: /models/manifest/model-release.json
+      SMOKE_IMAGE_PINS: /bundle/image-pins.yaml
     volumes:
       - ./../docs/dev_artifacts/qualification:/run/smoke-detect:ro
       - gpu_runtime_state:/run/gpu-state:ro
+      - ./../model-repository:/models:ro
+      - ./image-pins.yaml:/bundle/image-pins.yaml:ro
     depends_on:
       smoke-detect:
         condition: service_healthy

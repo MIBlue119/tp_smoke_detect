@@ -179,7 +179,6 @@ std::optional<CandidateEnvelope> MediaWorker::candidate(
   result.quality.face_pixels = result.quality.crop_pixels * 0.25;
   result.quality.eligible = true;
   result.quality.eligibility_reason = "reference_gate_passed";
-  result.observations.independent_channels = {"native_reference"};
   return result;
 }
 

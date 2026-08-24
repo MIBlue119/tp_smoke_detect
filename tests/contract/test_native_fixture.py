@@ -15,15 +15,26 @@ def test_native_candidate_fixture_is_v1_contract() -> None:
 
 def test_built_native_producer_output_is_v1_contract() -> None:
     binaries = (
+        Path("native/deepstream/build/media_worker_tests"),
         Path("native/deepstream/build-debug/media_worker_tests"),
         Path("native/deepstream/build-release/media_worker_tests"),
     )
     binary = next((path for path in binaries if path.is_file()), None)
     if binary is None:
-        raise AssertionError(
-            "native qualification binary is unavailable; build native/deepstream before "
-            "running the contract gate"
+        subprocess.run(
+            [
+                "cmake",
+                "-S",
+                "native/deepstream",
+                "-B",
+                "native/deepstream/build",
+                "-DBUILD_TESTING=ON",
+            ],
+            check=True,
         )
+        subprocess.run(["cmake", "--build", "native/deepstream/build", "--parallel"], check=True)
+        binary = Path("native/deepstream/build/media_worker_tests")
+    assert binary.is_file(), "native qualification binary was not produced"
     completed = subprocess.run([str(binary)], check=True, capture_output=True, text=True)
     payload = json.loads(completed.stdout.strip().splitlines()[-1])
     parsed = CandidateEnvelope.model_validate(payload)
@@ -31,3 +42,27 @@ def test_built_native_producer_output_is_v1_contract() -> None:
     assert parsed.event_id is not None
     assert parsed.correlation_id is not None
     assert parsed.occurred_at is not None
+
+
+def test_custom_media_publisher_executes_the_native_entrypoint() -> None:
+    binary = Path("native/deepstream/build/media_publisher")
+    if not binary.is_file():
+        subprocess.run(
+            [
+                "cmake",
+                "-S",
+                "native/deepstream",
+                "-B",
+                "native/deepstream/build",
+                "-DBUILD_TESTING=ON",
+            ],
+            check=True,
+        )
+        subprocess.run(["cmake", "--build", "native/deepstream/build", "--parallel"], check=True)
+    completed = subprocess.run(
+        [str(binary), "--reference"], check=True, capture_output=True, text=True
+    )
+    parsed = CandidateEnvelope.model_validate(json.loads(completed.stdout))
+    assert parsed.producer == "tp-smoke-detect.native-reference"
+    assert parsed.geometry.person_box.x == 0.1
+    assert not parsed.observations.independent_channels

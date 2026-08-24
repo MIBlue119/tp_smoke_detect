@@ -60,3 +60,10 @@ the GPU media plane; candidate publication crosses the typed metadata boundary.
 Python policy and persistence remain outside this process.
 No one-stream or 20-stream GPU claim is made by this checkout until GPU-107
 produces the required receipts.
+
+The production image invokes the repository-built `media_publisher` executable
+(not the upstream `deepstream-app`). Its `--reference` mode is used by the
+contract gate; the default mode constructs the DeepStream graph and publishes
+typed candidates through the configured callback. The image must supply the
+external model files and one-stream readiness receipt before the process is
+allowed to start.

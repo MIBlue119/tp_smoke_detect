@@ -49,6 +49,8 @@ TELEMETRY_FIELDS = {
     "nvdec_utilization",
     "gpu_utilization",
     "memory_used_mib",
+    "analysis_fps",
+    "camera_id",
 }
 
 
@@ -281,6 +283,8 @@ def model_probe(path: Path, artifact_root: Path | None) -> dict[str, Any]:
             for model in manifest.models:
                 verification = verify_local_artifact(model, artifact_root)
                 errors.extend(f"{model.artifact_id}: {error}" for error in verification.errors)
+            for engine in manifest.engines:
+                errors.extend(engine.validate(plan_root=artifact_root))
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         errors.append(f"model manifest unavailable: {exc}")
     result["errors"] = list(dict.fromkeys(errors))
@@ -289,7 +293,11 @@ def model_probe(path: Path, artifact_root: Path | None) -> dict[str, Any]:
 
 
 def replay_probe(
-    path: Path, streams: int, duration_hours: float, analysis_fps: float
+    path: Path,
+    streams: int,
+    duration_hours: float,
+    analysis_fps: float,
+    media_root: Path | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {"path": str(path), "status": "blocked", "manifest_sha256": None}
     errors: list[str] = []
@@ -320,8 +328,26 @@ def replay_probe(
             source = row.get("source_path")
             if not source:
                 errors.append(f"{stream_id}: source_path is missing")
-            elif not Path(source).is_file():
-                errors.append(f"{stream_id}: local source_path is not readable")
+            else:
+                source_path = Path(str(source))
+                if media_root is not None:
+                    if source_path.is_absolute():
+                        errors.append(f"{stream_id}: source_path must be relative to media root")
+                        source_path = media_root / "__invalid__"
+                    else:
+                        root = media_root.resolve()
+                        source_path = (root / source_path).resolve()
+                        try:
+                            source_path.relative_to(root)
+                        except ValueError:
+                            errors.append(f"{stream_id}: source_path escapes media root")
+                            source_path = root / "__invalid__"
+                if not source_path.is_file():
+                    errors.append(f"{stream_id}: local source_path is not readable")
+                else:
+                    actual_hash = sha256_file(source_path)
+                    if actual_hash != clip_hash:
+                        errors.append(f"{stream_id}: clip_sha256 does not match source bytes")
             if float(row.get("analysis_fps", 0)) < analysis_fps:
                 errors.append(f"{stream_id}: analysis_fps is below requested {analysis_fps}")
     except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
@@ -352,7 +378,64 @@ def parse_telemetry(lines: Iterable[str]) -> dict[str, Any]:
                 "max": max(values),
                 "avg": sum(values) / len(values),
             }
+    camera_ids = {str(row["camera_id"]) for row in rows if row.get("camera_id")}
+    if camera_ids:
+        summary["camera_count"] = len(camera_ids)
+    latency_values = [
+        float(row["candidate_latency_ms"])
+        for row in rows
+        if isinstance(row.get("candidate_latency_ms"), (int, float))
+    ]
+    if latency_values:
+        ordered = sorted(latency_values)
+        summary["candidate_latency_p95_ms"] = ordered[
+            min(len(ordered) - 1, int(len(ordered) * 0.95))
+        ]
     return summary
+
+
+def evaluate_telemetry(
+    metrics: dict[str, Any], *, streams: int, duration_seconds: float, analysis_fps: float
+) -> list[str]:
+    """Evaluate measured values, not merely telemetry field names."""
+
+    errors: list[str] = []
+    required = {"scheduled_samples", "processed_samples", "dropped_samples", "candidate_latency_ms"}
+    missing = sorted(required - set(metrics.get("fields", [])))
+    if missing:
+        errors.append(f"real runtime telemetry is incomplete: missing {', '.join(missing)}")
+        return errors
+    for field in required:
+        value = metrics.get(field, {}).get("max")
+        if not isinstance(value, (int, float)) or not value >= 0:
+            errors.append(f"telemetry field {field} is not finite and non-negative")
+    scheduled = metrics["scheduled_samples"]["max"]
+    processed = metrics["processed_samples"]["max"]
+    dropped = metrics["dropped_samples"]["max"]
+    if scheduled <= 0:
+        errors.append("scheduled_samples must be positive")
+    else:
+        if processed / scheduled < 0.99:
+            errors.append("processed sample ratio is below 99%")
+        if dropped / scheduled > 0.01:
+            errors.append("dropped sample ratio exceeds 1%")
+    if metrics.get("candidate_latency_p95_ms", float("inf")) > 8000:
+        errors.append("candidate-to-decision p95 latency exceeds 8000ms")
+    if metrics.get("queue_depth", {}).get("max", 0) > 1024:
+        errors.append("queue depth is unbounded above the 1024-sample qualification limit")
+    if metrics.get("queue_age_ms", {}).get("max", 0) > 8000:
+        errors.append("queue age exceeds the 8000ms qualification limit")
+    if streams > 1 and metrics.get("camera_count", 0) < streams:
+        errors.append(f"telemetry covers fewer than requested cameras: {streams}")
+    if (
+        analysis_fps > 0
+        and "analysis_fps" in metrics
+        and metrics["analysis_fps"]["min"] < analysis_fps
+    ):
+        errors.append(f"per-camera analysis FPS is below requested {analysis_fps}")
+    if duration_seconds < 0:
+        errors.append("runtime duration is invalid")
+    return errors
 
 
 def run_runtime(
@@ -438,7 +521,11 @@ def build_receipt(args: argparse.Namespace) -> tuple[dict[str, Any], list[Comman
     all_commands.extend(commands)
     models = model_probe(args.model_manifest, args.artifact_root)
     replay = replay_probe(
-        args.replay_manifest, args.streams, args.duration_hours, args.analysis_fps
+        args.replay_manifest,
+        args.streams,
+        args.duration_hours,
+        args.analysis_fps,
+        args.media_root,
     )
     prerequisites = [host, image, models, replay]
     errors = [error for item in prerequisites for error in item.get("errors", [])]
@@ -460,17 +547,16 @@ def build_receipt(args: argparse.Namespace) -> tuple[dict[str, Any], list[Comman
             result, metrics = run_runtime(runtime_argv, args.runtime_timeout, args.sample_interval)
             all_commands.append(result)
             runtime = {"status": result.status, "command": result.as_dict(), "metrics": metrics}
-            required = {
-                "scheduled_samples",
-                "processed_samples",
-                "dropped_samples",
-                "candidate_latency_ms",
-            }
-            missing = sorted(required - set(metrics.get("fields", [])))
             if result.status != "passed":
                 errors.append(f"real runtime did not complete: {result.status}")
-            if missing:
-                errors.append(f"real runtime telemetry is incomplete: missing {', '.join(missing)}")
+            errors.extend(
+                evaluate_telemetry(
+                    metrics,
+                    streams=args.streams,
+                    duration_seconds=result.duration_seconds,
+                    analysis_fps=args.analysis_fps,
+                )
+            )
     elif args.real_runtime:
         runtime = {"status": "not-run", "reason": "prerequisites blocked"}
     if args.fault_injection:
@@ -600,6 +686,11 @@ def main() -> int:
     parser.add_argument("--replay-manifest", type=Path, default=DEFAULT_REPLAY)
     parser.add_argument("--model-manifest", type=Path, default=DEFAULT_MODEL_MANIFEST)
     parser.add_argument("--artifact-root", type=Path)
+    parser.add_argument(
+        "--media-root",
+        type=Path,
+        help="approved local replay root; source paths must remain below this directory",
+    )
     parser.add_argument("--streams", type=int, choices=[1, 4, 8, 20], default=1)
     parser.add_argument("--duration-hours", type=float, default=0.0)
     parser.add_argument("--analysis-fps", type=float, default=10.0)

@@ -34,5 +34,8 @@ done
 cp deploy/compose.yaml deploy/image-pins.yaml "$output/"
 cp -a configs model-repository deploy/prometheus "$output/"
 printf '%s\n' "$(date -u +%FT%TZ)" >"$output/exported-at.txt"
-(cd "$output" && sha256sum images.tsv compose.yaml image-pins.yaml >bundle.sha256)
+# Every imported release member is covered, including model repository files,
+# configs, observability rules, SBOMs, and image archives.  The checksum file
+# itself is intentionally excluded so it can be verified in one pass.
+(cd "$output" && find . -type f ! -name bundle.sha256 -print0 | sort -z | xargs -0 sha256sum >bundle.sha256)
 echo "GPU offline bundle exported to $output"

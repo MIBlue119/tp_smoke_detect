@@ -108,6 +108,15 @@ def test_engine_binding_rejects_runtime_or_input_mismatch() -> None:
     assert any("model_sha256" in error for error in errors)
 
 
+def test_engine_binding_hashes_tensor_rt_plan_bytes(tmp_path: Path) -> None:
+    plan = tmp_path / "model.plan"
+    plan.write_bytes(b"plan-bytes")
+    bound = replace(engine(), plan_sha256=hashlib.sha256(b"plan-bytes").hexdigest())
+    assert bound.validate(plan_root=tmp_path) == ()
+    plan.write_bytes(b"tampered")
+    assert any("plan_sha256" in error for error in bound.validate(plan_root=tmp_path))
+
+
 def test_local_verification_checks_artifact_and_sbom_hashes(tmp_path: Path) -> None:
     model_path = tmp_path / "siglip2-crop-head.safetensors"
     model_path.write_bytes(b"model")

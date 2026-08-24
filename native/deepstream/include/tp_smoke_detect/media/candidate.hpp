@@ -26,6 +26,10 @@ struct CandidateQuality {
 };
 
 struct CandidateObservations {
+  bool has_pose{false};
+  bool has_object{false};
+  bool has_smoke{false};
+  bool has_temporal{false};
   double hand_to_mouth_distance{0.0};
   std::int32_t mouth_dwell_ms{0};
   double pose_confidence{0.0};

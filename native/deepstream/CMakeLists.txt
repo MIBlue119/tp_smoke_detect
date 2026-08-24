@@ -48,3 +48,7 @@ if(BUILD_TESTING)
   target_compile_options(media_worker_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME media_worker_tests COMMAND media_worker_tests)
 endif()
+
+add_executable(media_publisher src/media_publisher.cpp)
+target_link_libraries(media_publisher PRIVATE media_worker)
+target_compile_options(media_publisher PRIVATE -Wall -Wextra -Wpedantic -Werror)

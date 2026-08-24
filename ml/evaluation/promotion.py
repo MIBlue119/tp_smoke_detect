@@ -213,6 +213,10 @@ def evaluate_promotion(
         baseline_result = next(
             result for result in report.results if result.config.profile_id == baseline_profile
         )
+        if not baseline_result.config.provenance_approved:
+            reasons.append("baseline provenance/license disposition is not approved")
+        if baseline_result.config.candidate_p95_latency_ms is None:
+            reasons.append("baseline candidate latency receipt is missing")
         organic_report = run_ablation(organic, (baseline_result.config,)).results[0].report
         if organic_report.precision is None or organic_report.precision < limits.min_precision:
             reasons.append("organic baseline precision is below promotion threshold")
@@ -229,6 +233,8 @@ def evaluate_promotion(
             reasons.append("reviewer memory receipt is missing")
         elif reviewer_config.memory_high_water_gib > limits.max_vlm_memory_gib:
             reasons.append("reviewer memory high-water exceeds promotion threshold")
+        if reviewer_config.candidate_p95_latency_ms is None:
+            reasons.append("reviewer candidate latency receipt is missing")
         if baseline_result is not None:
             base_organic = run_ablation(organic, (baseline_result.config,)).results[0].report
             reviewer_organic = run_ablation(organic, (reviewer_config,)).results[0].report

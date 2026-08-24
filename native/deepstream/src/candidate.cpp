@@ -126,20 +126,36 @@ std::string CandidateEnvelope::to_json() const {
   output << ','; key(output, "eligible"); output << (quality.eligible ? "true" : "false");
   output << ','; key(output, "eligibility_reason"); quote(output, quality.eligibility_reason); output << '}';
   output << ','; key(output, "observations"); output << '{';
-  key(output, "pose"); output << '{';
-  key(output, "hand_to_mouth_distance"); output << observations.hand_to_mouth_distance;
-  output << ','; key(output, "mouth_dwell_ms"); output << observations.mouth_dwell_ms;
-  output << ','; key(output, "confidence"); output << observations.pose_confidence << '}';
-  output << ','; key(output, "objects"); output << "[{";
-  key(output, "label"); quote(output, observations.object_label);
-  output << ','; key(output, "confidence"); output << observations.object_confidence << "}]";
-  output << ','; key(output, "smoke"); output << '{';
-  key(output, "smoke_score"); output << observations.smoke_score;
-  output << ','; key(output, "ember_score"); output << observations.ember_score << '}';
-  output << ','; key(output, "temporal"); output << '{';
-  key(output, "hand_retreat"); output << (observations.hand_retreat ? "true" : "false");
-  output << ','; key(output, "cycle_interval_ms"); output << observations.cycle_interval_ms;
-  output << ','; key(output, "persistence_ms"); output << observations.persistence_ms << '}';
+  key(output, "pose");
+  if (!observations.has_pose) output << "null";
+  else {
+    output << '{';
+    key(output, "hand_to_mouth_distance"); output << observations.hand_to_mouth_distance;
+    output << ','; key(output, "mouth_dwell_ms"); output << observations.mouth_dwell_ms;
+    output << ','; key(output, "confidence"); output << observations.pose_confidence << '}';
+  }
+  output << ','; key(output, "objects");
+  if (!observations.has_object) output << "[]";
+  else {
+    output << "[{";
+    key(output, "label"); quote(output, observations.object_label);
+    output << ','; key(output, "confidence"); output << observations.object_confidence << "}]";
+  }
+  output << ','; key(output, "smoke");
+  if (!observations.has_smoke) output << "null";
+  else {
+    output << '{';
+    key(output, "smoke_score"); output << observations.smoke_score;
+    output << ','; key(output, "ember_score"); output << observations.ember_score << '}';
+  }
+  output << ','; key(output, "temporal");
+  if (!observations.has_temporal) output << "null";
+  else {
+    output << '{';
+    key(output, "hand_retreat"); output << (observations.hand_retreat ? "true" : "false");
+    output << ','; key(output, "cycle_interval_ms"); output << observations.cycle_interval_ms;
+    output << ','; key(output, "persistence_ms"); output << observations.persistence_ms << '}';
+  }
   output << ','; key(output, "independent_channels"); string_array(output, observations.independent_channels);
   output << '}';
   output << ','; key(output, "inference_receipts"); inference_receipt_array(output, inference_receipts);

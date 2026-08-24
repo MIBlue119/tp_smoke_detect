@@ -12,6 +12,7 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "Walnutek" }]
 dependencies = [
   "fastapi>=0.115,<1",
+  "paho-mqtt>=2.1,<3",
   "uvicorn>=0.32,<1",
   "pydantic>=2.10,<3",
   "pydantic-settings>=2.7,<3",

@@ -97,6 +97,7 @@ class AppSettings(BaseSettings):
     # default remains in-memory so importing the ASGI app is side-effect free.
     database: str = ":memory:"
     artifact_root: str = "artifacts"
+    model_manifest: str | None = None
     policy: PolicySettings = Field(default_factory=PolicySettings)
     candidate: CandidateServiceSettings = Field(default_factory=CandidateServiceSettings)
     cameras: list[CameraProfile] = Field(default_factory=list)

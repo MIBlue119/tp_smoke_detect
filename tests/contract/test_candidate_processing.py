@@ -173,6 +173,43 @@ def test_candidate_service_deduplicates_and_emits_one_decision() -> None:
     assert receipts[0]["outcome"] == "would_announce"
 
 
+def test_restart_recovers_durable_decision_before_new_cascade_state() -> None:
+    repository = SQLiteAuditRepository()
+    first_service = _service(repository)
+    candidate = _candidate(pts_ns=9_000_000_000)
+    first = first_service.process_payload(candidate)
+    assert first.status == "completed"
+
+    restarted_service = _service(repository)
+    duplicate = restarted_service.process_payload(candidate)
+
+    assert duplicate.status == "duplicate"
+    assert duplicate.reason == "durably_completed"
+    assert restarted_service.active_track_count == 0
+
+
+def test_forged_independent_channels_do_not_create_domain_evidence() -> None:
+    repository = SQLiteAuditRepository()
+    service = _service(repository)
+    candidate = _candidate().model_copy(
+        update={
+            "observations": Observations(
+                objects=[],
+                smoke=None,
+                independent_channels=["object", "smoke"],
+            ),
+            "inference_receipts": [],
+            "model_revisions": {},
+        }
+    )
+
+    result = service.process_payload(candidate)
+
+    assert result.decision is not None
+    assert result.decision.outcome.value == "rejected"
+    assert result.decision.audio_eligibility is False
+
+
 def test_missing_receipt_is_persisted_rejected_and_cannot_request_audio() -> None:
     repository = SQLiteAuditRepository()
     service = _service(repository)
@@ -244,3 +281,32 @@ def test_mqtt_backpressure_requests_retry_without_blocking() -> None:
     assert consumer.submit(first)
     assert not consumer.submit(second)
     assert retries == [1]
+
+
+def test_mqtt_retry_carries_attempt_in_broker_properties() -> None:
+    class Properties:
+        UserProperty = [("x-smoke-delivery-attempt", "1"), ("other", "kept")]
+
+    class Message:
+        payload = b"{}"
+        topic = "track.candidate.v1"
+        mid = 17
+        properties = Properties()
+
+        def ack(self) -> None:
+            self.acked = True
+
+    class Client:
+        def __init__(self) -> None:
+            self.published: list[object] = []
+
+        def publish(self, *args: object, **kwargs: object) -> None:
+            self.published.append((args, kwargs))
+
+    client = Client()
+    consumer = MqttCandidateConsumer(_service(SQLiteAuditRepository()), client=client)
+    consumer._republish(Message(), 2)
+
+    properties = client.published[0][1]["properties"]  # type: ignore[index]
+    assert ("x-smoke-delivery-attempt", "2") in properties.UserProperty
+    assert ("other", "kept") in properties.UserProperty

@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from scripts.gpu_receipts import validate_one_stream_receipt
 from scripts.verify_gpu_bundle import verify_bundle
 
 ROOT = Path(__file__).parents[2]
@@ -42,3 +43,22 @@ def test_gpu_compose_has_internal_isolated_services() -> None:
     assert "./triton-entrypoint.sh:/opt/smoke-detect/bin/triton-entrypoint:ro" in compose
     assert "gpu_runtime_state:/run/gpu-state" in compose
     assert "SMOKE_GPU_CANDIDATE_READY_FILE: /run/gpu-state/candidate-ready" in compose
+    assert "/opt/smoke-detect/bin/media-publisher" in compose
+    assert "test -r /run/gpu-state/candidate-ready" in compose
+
+
+def test_readiness_receipt_requires_bound_runtime_identity_and_freshness() -> None:
+    errors = validate_one_stream_receipt(
+        {
+            "schema_version": "gpu.one-stream-receipt.v1",
+            "status": "one-stream-ready",
+            "manifest_sha256": "a" * 64,
+            "image_digest": "sha256:" + "b" * 64,
+            "source_qualification": "metadata-only",
+            "generated_at": "2020-01-01T00:00:00Z",
+        },
+        manifest_sha256="a" * 64,
+        image_digest="sha256:" + "b" * 64,
+    )
+    assert any("real runtime" in error for error in errors)
+    assert any("stale" in error for error in errors)

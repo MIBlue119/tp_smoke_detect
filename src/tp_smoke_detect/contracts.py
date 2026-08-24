@@ -369,6 +369,35 @@ class CandidateEnvelope(EventMetadata):
                 score=reviewer.score,
                 revision=reviewer_receipt.model_revision,
             )
+        # ``independent_channels`` is retained for v1 wire compatibility, but
+        # it is never trusted.  Derive the safety channels only from positive
+        # observations whose corresponding receipt is successful and bound to
+        # this candidate.  A producer cannot smuggle a second channel by
+        # writing an arbitrary string into the compatibility field.
+        receipt_by_role = {item.role: item for item in self.inference_receipts}
+        positive_channels: set[str] = set()
+        object_positive = any(
+            item.label in {"cigarette", "vape", "heated_tobacco"} and item.confidence > 0
+            for item in self.observations.objects
+        )
+        object_receipt = receipt_by_role.get(CandidateInferenceRole.OBJECT)
+        if (
+            object_positive
+            and object_receipt is not None
+            and object_receipt.status is CandidateInferenceStatus.OK
+        ):
+            positive_channels.add("object")
+        smoke_positive = self.observations.smoke is not None and (
+            self.observations.smoke.smoke_score > 0 or self.observations.smoke.ember_score > 0
+        )
+        smoke_receipt = receipt_by_role.get(CandidateInferenceRole.SMOKE)
+        if (
+            smoke_positive
+            and smoke_receipt is not None
+            and smoke_receipt.status is CandidateInferenceStatus.OK
+        ):
+            positive_channels.add("smoke")
+
         revisions_by_role = dict(
             (role.value, revision) for role, revision in self.model_revisions.items()
         )
@@ -402,7 +431,7 @@ class CandidateEnvelope(EventMetadata):
             smoke_score=smoke.smoke_score if smoke is not None else 0,
             ember_score=smoke.ember_score if smoke is not None else 0,
             persistence_ms=temporal.persistence_ms if temporal is not None else 0,
-            positive_channels=frozenset(self.observations.independent_channels),
+            positive_channels=frozenset(positive_channels),
             vlm=vlm,
             model_revisions=revisions,
         )

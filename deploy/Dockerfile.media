@@ -20,6 +20,7 @@ RUN cmake -S native/deepstream -B /tmp/media-build -DBUILD_TESTING=ON \
 
 FROM ubuntu:24.04 AS reference
 COPY --from=reference-build /tmp/media-build/libmedia_worker.a /opt/smoke-detect/lib/
+COPY --from=reference-build /tmp/media-build/media_publisher /opt/smoke-detect/bin/media-publisher
 COPY --from=reference-build /src/native/deepstream/include /opt/smoke-detect/include
 LABEL org.opencontainers.image.title="tp-smoke-detect media worker (CPU reference)" \
       org.opencontainers.image.description="Bounded media lifecycle and contract reference path"
@@ -37,15 +38,17 @@ RUN cmake -S native/deepstream -B /tmp/media-build \
 
 FROM ${DEEPSTREAM_IMAGE} AS deepstream
 COPY --from=deepstream-build /tmp/media-build/libmedia_worker.a /opt/smoke-detect/lib/
+COPY --from=deepstream-build /tmp/media-build/media_publisher /opt/smoke-detect/bin/media-publisher
 COPY --from=deepstream-build /src/native/deepstream/include /opt/smoke-detect/include
 COPY deploy/media-entrypoint.sh /opt/smoke-detect/bin/media-entrypoint
 COPY deploy/triton-entrypoint.sh /opt/smoke-detect/bin/triton-entrypoint
 COPY deploy/deepstream/rtx3090/config.txt /etc/smoke-detect/deepstream/config.txt
+COPY native/deepstream/config /opt/smoke-detect/deepstream/config
 RUN chmod 0755 /opt/smoke-detect/bin/media-entrypoint /opt/smoke-detect/bin/triton-entrypoint
 ENV NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video \
     SMOKE_GPU_MEDIA_CONFIG=/etc/smoke-detect/deepstream/config.txt \
-    SMOKE_GPU_MEDIA_EXECUTABLE=deepstream-app
+    SMOKE_GPU_MEDIA_EXECUTABLE=/opt/smoke-detect/bin/media-publisher
 ENTRYPOINT ["/opt/smoke-detect/bin/media-entrypoint"]
 LABEL org.opencontainers.image.title="tp-smoke-detect media worker (DeepStream 7.0)" \
       org.opencontainers.image.description="GPU media plane; RTX 3090 lab row; target qualification required"

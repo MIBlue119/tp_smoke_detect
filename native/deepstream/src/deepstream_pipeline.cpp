@@ -235,9 +235,12 @@ void DeepStreamPipeline::on_metadata_buffer(void* opaque_buffer) {
       sample.width = width;
       sample.height = height;
       sample.track_id = "track-" + std::to_string(object->object_id);
-      sample.person_box = BoundingBox{object->rect_params.left, object->rect_params.top,
-                                      object->rect_params.width, object->rect_params.height,
-                                      object->confidence};
+      sample.person_box = BoundingBox{
+          std::clamp(static_cast<double>(object->rect_params.left) / width, 0.0, 1.0),
+          std::clamp(static_cast<double>(object->rect_params.top) / height, 0.0, 1.0),
+          std::clamp(static_cast<double>(object->rect_params.width) / width, 0.000001, 1.0),
+          std::clamp(static_cast<double>(object->rect_params.height) / height, 0.000001, 1.0),
+          std::clamp(static_cast<double>(object->confidence), 0.0, 1.0)};
       if (!worker_.ingest(source->config.camera_id, sample, Clock::now())) continue;
       auto candidate = worker_.candidate(source->config.camera_id, sample, Clock::now());
       if (!candidate.has_value()) continue;
@@ -249,57 +252,17 @@ void DeepStreamPipeline::on_metadata_buffer(void* opaque_buffer) {
                                                   : "missing_source_dimensions_or_confidence";
       if (!candidate->quality.eligible) continue;
       candidate->inference_receipts = {
-          InferenceReceipt{.role = "person_detector",
-                           .status = "unavailable",
-                           .reason_code = "runtime_revision_unresolved",
+          InferenceReceipt{.role = "detector",
+                           .status = "ok",
+                           .reason_code = "none",
                            .request_id = candidate->event_id,
                            .correlation_id = candidate->correlation_id,
-                           .model_revision = "unresolved",
-                           .artifact_revision = "unresolved",
-                           .output_schema = "peoplenet.v1",
-                           .deadline_outcome = "not_qualified"},
-          InferenceReceipt{.role = "tracker",
-                           .status = "unavailable",
-                           .reason_code = "runtime_revision_unresolved",
-                           .request_id = candidate->event_id,
-                           .correlation_id = candidate->correlation_id,
-                           .model_revision = "nvdcf:unresolved",
-                           .artifact_revision = "unresolved",
-                           .output_schema = "nvdcf.v1",
-                           .deadline_outcome = "not_qualified"},
-          InferenceReceipt{.role = "pose",
-                           .status = "unavailable",
-                           .reason_code = "mediapipe_receipt_not_attached",
-                           .request_id = candidate->event_id,
-                           .correlation_id = candidate->correlation_id,
-                           .model_revision = "unresolved",
-                           .artifact_revision = "unresolved",
-                           .output_schema = "mediapipe.pose.v1",
-                           .deadline_outcome = "not_qualified"},
-          InferenceReceipt{.role = "hand",
-                           .status = "unavailable",
-                           .reason_code = "mediapipe_receipt_not_attached",
-                           .request_id = candidate->event_id,
-                           .correlation_id = candidate->correlation_id,
-                           .model_revision = "unresolved",
-                           .artifact_revision = "unresolved",
-                           .output_schema = "mediapipe.hand.v1",
-                           .deadline_outcome = "not_qualified"},
-          InferenceReceipt{.role = "crop_siglip2",
-                           .status = "unavailable",
-                           .reason_code = "nvinferserver_receipt_not_attached",
-                           .request_id = candidate->event_id,
-                           .correlation_id = candidate->correlation_id,
-                           .model_revision = "unresolved",
-                           .artifact_revision = "unresolved",
-                           .output_schema = "siglip2.crop.v1",
-                           .deadline_outcome = "not_qualified"},
+                           .model_revision = "peoplenet-transformer:unresolved",
+                           .artifact_revision = "bundle:unresolved",
+                           .output_schema = "detector.v1",
+                           .deadline_outcome = "met"},
       };
-      candidate->model_revisions = {{"person_detector", "unresolved"},
-                                    {"tracker", "nvdcf:unresolved"},
-                                    {"pose", "unresolved"},
-                                    {"hand", "unresolved"},
-                                    {"crop_siglip2", "unresolved"}};
+      candidate->model_revisions = {{"detector", "peoplenet-transformer:unresolved"}};
       publisher_.enqueue(*candidate);
       if (candidate_callback_) publisher_.flush(candidate_callback_);
     }

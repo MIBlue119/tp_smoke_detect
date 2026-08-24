@@ -11,6 +11,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+import yaml
+from scripts.gpu_receipts import validate_one_stream_receipt
+
 RECEIPT = Path(
     os.environ.get("SMOKE_GPU_READINESS_RECEIPT", "/run/smoke-detect/gpu-readiness.json")
 )
@@ -21,14 +24,29 @@ DEPENDENCIES = (
     "http://smoke-detect:8000/health/ready",
     "http://baseline-model:8000/v2/health/ready",
 )
+MANIFEST = Path(os.environ.get("SMOKE_MODEL_MANIFEST", "/models/manifest/model-release.json"))
+IMAGE_PINS = Path(os.environ.get("SMOKE_IMAGE_PINS", "/bundle/image-pins.yaml"))
 
 
 def readiness() -> tuple[bool, dict[str, Any]]:
     errors: list[str] = []
     try:
         value = json.loads(RECEIPT.read_text(encoding="utf-8"))
-        if value.get("status") != "one-stream-ready":
-            errors.append("one-stream receipt is not one-stream-ready")
+        manifest_sha256 = None
+        image_digest = None
+        try:
+            from ml.registry.model_repository import ModelRepositoryManifest
+
+            manifest_sha256 = ModelRepositoryManifest.read(MANIFEST).digest
+            pins = yaml.safe_load(IMAGE_PINS.read_text(encoding="utf-8")) or {}
+            image_digest = pins.get("images", {}).get("deepstream_triton_rtx3090", {}).get("digest")
+        except (OSError, ValueError, yaml.YAMLError, AttributeError, TypeError) as exc:
+            errors.append(f"GPU identity inputs unavailable: {exc}")
+        errors.extend(
+            validate_one_stream_receipt(
+                value, manifest_sha256=manifest_sha256, image_digest=image_digest
+            )
+        )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         errors.append(f"GPU receipt unavailable: {exc}")
     if not CANDIDATE_READY_FILE.is_file():

@@ -13,6 +13,7 @@ from typing import Any
 
 import yaml
 from ml.registry.model_repository import ModelRepositoryManifest, verify_local_artifact
+from scripts.gpu_receipts import validate_one_stream_receipt
 
 SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 REQUIRED_IMAGES = ("core", "mqtt", "prometheus", "deepstream_triton_rtx3090")
@@ -74,6 +75,8 @@ def verify_bundle(
             for model in manifest.models:
                 result = verify_local_artifact(model, artifact_root)
                 errors.extend(f"{model.artifact_id}: {error}" for error in result.errors)
+            for engine in manifest.engines:
+                errors.extend(engine.validate(plan_root=artifact_root))
         manifest_receipt.update(
             {"status": "ok" if not manifest_errors else "blocked", "digest": manifest.digest}
         )
@@ -103,8 +106,17 @@ def verify_bundle(
         try:
             value = json.loads(one_stream_receipt.read_text(encoding="utf-8"))
             stream_receipt = value if isinstance(value, dict) else {"status": "invalid"}
-            if stream_receipt.get("status") != "one-stream-ready":
-                errors.append("one-stream receipt is not one-stream-ready")
+            expected_image = None
+            deepstream_pin = images.get("deepstream_triton_rtx3090")
+            if isinstance(deepstream_pin, dict):
+                expected_image = deepstream_pin.get("digest")
+            errors.extend(
+                validate_one_stream_receipt(
+                    stream_receipt,
+                    manifest_sha256=manifest_receipt.get("digest"),
+                    image_digest=expected_image,
+                )
+            )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             errors.append(f"one-stream receipt unavailable: {exc}")
     errors = list(dict.fromkeys(errors))

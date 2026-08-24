@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -19,7 +20,7 @@ from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Literal
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import ValidationError
 
@@ -146,6 +147,7 @@ class CandidateProcessingService:
             raise CandidateMessageError(str(exc)) from exc
 
         event_key = self._event_key(candidate)
+        decision_id = self._decision_id(candidate)
         with self._lock:
             if event_key in self._completed:
                 self._record_terminal("duplicate", started)
@@ -154,6 +156,18 @@ class CandidateProcessingService:
             try:
                 self._validate_metadata(candidate)
                 evidence_ok, evidence_reason = self._validate_gpu_evidence(candidate)
+                # Recover durable completion before touching process-local
+                # temporal state.  A restarted consumer must not ingest a
+                # redelivery into a fresh cascade before discovering that its
+                # deterministic decision already exists.
+                existing = self.repository.get_decision(str(decision_id))
+                if existing is not None:
+                    decision = self._persisted_decision(existing)
+                    self._completed.add(event_key)
+                    self._record_terminal("duplicate", started)
+                    return CandidateProcessingResult(
+                        "duplicate", event_key, decision, reason="durably_completed"
+                    )
                 track_key = (candidate.camera_id, candidate.track_id)
                 cascade = self._cascades.get(track_key)
                 if cascade is None:
@@ -175,7 +189,7 @@ class CandidateProcessingService:
 
                 existing = self.repository.get_decision(str(decision.decision_id))
                 if existing is not None:
-                    decision = DecisionCompleted.model_validate(existing)
+                    decision = self._persisted_decision(existing)
                 else:
                     try:
                         self.repository.put_decision(decision.model_dump(mode="json"))
@@ -186,7 +200,7 @@ class CandidateProcessingService:
                         existing = self.repository.get_decision(str(decision.decision_id))
                         if existing is None:
                             raise CandidateProcessingError("decision persistence failed") from exc
-                        decision = DecisionCompleted.model_validate(existing)
+                        decision = self._persisted_decision(existing)
 
                 audio_outcome: str | None = None
                 if decision.outcome is DecisionOutcome.VERIFIED and decision.audio_eligibility:
@@ -315,8 +329,7 @@ class CandidateProcessingService:
     def _decision(
         self, candidate: CandidateEnvelope, result: CascadeDecision, evidence_ok: bool
     ) -> DecisionCompleted:
-        event_key = self._event_key(candidate)
-        decision_id = uuid5(NAMESPACE_URL, f"tp-smoke-detect/decision/{event_key}")
+        decision_id = self._decision_id(candidate)
         policy_revision = self.audio_service.policy.config.policy_revision
         mode = self.audio_service.policy.config.mode
         audio_eligible = bool(evidence_ok and result.audio_eligibility)
@@ -337,6 +350,20 @@ class CandidateProcessingService:
             mode=mode,
             audio_eligibility=audio_eligible,
         )
+
+    @classmethod
+    def _decision_id(cls, candidate: CandidateEnvelope) -> UUID:
+        return uuid5(NAMESPACE_URL, f"tp-smoke-detect/decision/{cls._event_key(candidate)}")
+
+    @staticmethod
+    def _persisted_decision(value: Mapping[str, Any]) -> DecisionCompleted:
+        payload = value.get("payload")
+        if isinstance(payload, Mapping):
+            fields = DecisionCompleted.model_fields
+            return DecisionCompleted.model_validate(
+                {key: item for key, item in payload.items() if key in fields}
+            )
+        return DecisionCompleted.model_validate(value)
 
     def _request_audio(self, candidate: CandidateEnvelope, decision: DecisionCompleted) -> str:
         zone_id = self.zone_by_camera.get(
@@ -396,11 +423,38 @@ def build_candidate_processing_service(
     )
     zones = {profile.camera_id: profile.zone_id for profile in settings.cameras}
     candidate = settings.candidate
+    expected_revisions: dict[CandidateInferenceRole | str, str] = {}
+    manifest_path = getattr(settings, "model_manifest", None) or os.environ.get(
+        "SMOKE_MODEL_MANIFEST"
+    )
+    if manifest_path:
+        from ml.registry.model_repository import ModelRepositoryManifest
+
+        manifest = ModelRepositoryManifest.read(manifest_path)
+        manifest_errors = manifest.validate()
+        if manifest_errors:
+            raise ValueError("active model manifest is invalid: " + "; ".join(manifest_errors))
+        role_map = {
+            "person_detector": CandidateInferenceRole.DETECTOR,
+            "pose_landmarker": CandidateInferenceRole.POSE,
+            "crop_classifier": CandidateInferenceRole.OBJECT,
+        }
+        expected_revisions = {
+            role_map[model.role]: f"{model.artifact_id}:{model.version}"
+            for model in manifest.models
+            if model.role in role_map
+        }
+    elif (
+        candidate.require_gpu_receipts
+        and getattr(settings, "environment", "development") == "production"
+    ):
+        raise ValueError("production GPU candidate processing requires SMOKE_MODEL_MANIFEST")
     return CandidateProcessingService(
         repository,
         audio,
         zone_by_camera=zones,
         require_gpu_receipts=candidate.require_gpu_receipts,
+        expected_revisions=expected_revisions,
         metrics=metrics,
         health=health,
     )
