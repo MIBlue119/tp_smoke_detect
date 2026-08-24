@@ -1,0 +1,75 @@
+{
+  "schema_version": "ml.gpu-model-combination.v1",
+  "profile": "gpu-rtx3090-ds7",
+  "repository_manifest": "model-repository/manifest/model-release.json",
+  "runtime": {
+    "compute_capability": "8.6",
+    "cuda": "12.2",
+    "deepstream": "7.0",
+    "tensorrt": "8.6.1.6",
+    "gpu": "NVIDIA GeForce RTX 3090",
+    "image_pin": "deploy/image-pins.yaml:deepstream_triton_rtx3090"
+  },
+  "baseline": [
+    {
+      "role": "person_detector",
+      "artifact_id": "peoplenet-transformer",
+      "runtime": "tensorrt",
+      "precision": "fp16",
+      "evidence_channel": "person_presence"
+    },
+    {
+      "role": "pose_landmarker",
+      "artifact_id": "mediapipe-pose-landmarker",
+      "runtime": "mediapipe-tasks-cpp-gpu",
+      "precision": "fp16",
+      "evidence_channel": "hand_to_mouth_geometry"
+    },
+    {
+      "role": "hand_landmarker",
+      "artifact_id": "mediapipe-hand-landmarker",
+      "runtime": "mediapipe-tasks-cpp-gpu",
+      "precision": "fp16",
+      "evidence_channel": "hand_to_mouth_geometry"
+    },
+    {
+      "role": "crop_classifier",
+      "artifact_id": "siglip2-crop-head",
+      "runtime": "triton-tensorrt",
+      "precision": "fp16",
+      "classes": [
+        "cigarette",
+        "vape",
+        "phone",
+        "cup",
+        "food",
+        "pen_toothpick",
+        "betel_quid",
+        "background"
+      ],
+      "evidence_channel": "named_object"
+    }
+  ],
+  "reviewer": {
+    "enabled": false,
+    "artifact_id": "lfm2-vl-reviewer",
+    "runtime": "triton-python-backend",
+    "reason_disabled": "pending exact revision, license disposition, image/SBOM, memory, and latency receipts",
+    "evidence_channel": "review_only"
+  },
+  "promotion": {
+    "state": "blocked",
+    "required_receipts": [
+      "source-and-license",
+      "parent-lineage",
+      "artifact-and-export-sha256",
+      "dataset-manifest",
+      "calibration",
+      "sbom",
+      "tensorrt-engine-binding",
+      "sealed-evaluation",
+      "rollback-rehearsal"
+    ],
+    "audio_mode": "shadow"
+  }
+}

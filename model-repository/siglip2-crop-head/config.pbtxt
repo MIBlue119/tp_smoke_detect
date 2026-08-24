@@ -1,0 +1,18 @@
+name: "siglip2-crop-head"
+platform: "tensorrt_plan"
+max_batch_size: 16
+version_policy { specific { versions: 1 } }
+input [
+  { name: "pixel_values" data_type: TYPE_FP16 dims: [ 3, 224, 224 ] }
+]
+output [
+  { name: "class_scores" data_type: TYPE_FP16 dims: [ 8 ] }
+]
+parameters {
+  key: "model_artifact_id"
+  value: { string_value: "siglip2-crop-head" }
+}
+parameters {
+  key: "release_manifest"
+  value: { string_value: "gpu-baseline-r5:0.1.0" }
+}

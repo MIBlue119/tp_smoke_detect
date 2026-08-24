@@ -1,0 +1,23 @@
+name: "lfm2-vl-reviewer"
+backend: "python"
+max_batch_size: 1
+version_policy { specific { versions: 1 } }
+input [
+  { name: "image" data_type: TYPE_UINT8 dims: [ -1 ] },
+  { name: "request_id" data_type: TYPE_STRING dims: [ 1 ] }
+]
+output [
+  { name: "structured_review" data_type: TYPE_STRING dims: [ 1 ] }
+]
+parameters {
+  key: "model_artifact_id"
+  value: { string_value: "lfm2-vl-reviewer" }
+}
+parameters {
+  key: "release_manifest"
+  value: { string_value: "gpu-baseline-r5:0.1.0" }
+}
+parameters {
+  key: "enabled_by_default"
+  value: { string_value: "false" }
+}
