@@ -1,0 +1,264 @@
+"""Bounded MQTT delivery adapter for ``track.candidate.v1``.
+
+The adapter is intentionally independent of the paho package at import time;
+the CPU profile remains dependency-free.  A paho v2 client can be supplied by
+the GPU deployment, while tests use the public ``submit`` method with explicit
+ack/retry/dead-letter callbacks.
+"""
+
+from __future__ import annotations
+
+import logging
+import queue
+import threading
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+from ...application.candidate_processing import (
+    CandidateMessageError,
+    CandidateProcessingError,
+    CandidateProcessingService,
+)
+from ...observability.health import HealthRegistry, HealthState
+from ...observability.metrics import OperationalMetrics
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class MqttDelivery:
+    """One broker delivery and its explicit lifecycle callbacks."""
+
+    payload: bytes | str
+    topic: str = "track.candidate.v1"
+    message_id: str | None = None
+    attempts: int = 0
+    ack: Callable[[], None] = lambda: None
+    retry: Callable[[int], None] = lambda _attempt: None
+    dead_letter: Callable[[str], None] = lambda _reason: None
+
+
+@dataclass(frozen=True, slots=True)
+class MqttConsumerConfig:
+    topic: str = "track.candidate.v1"
+    dead_letter_topic: str = "track.candidate.v1.dead-letter"
+    max_inflight: int = 32
+    retry_limit: int = 3
+
+    def __post_init__(self) -> None:
+        if not self.topic or not self.dead_letter_topic:
+            raise ValueError("MQTT topics must not be empty")
+        if self.max_inflight < 1:
+            raise ValueError("max_inflight must be positive")
+        if self.retry_limit < 0:
+            raise ValueError("retry_limit must not be negative")
+
+
+class MqttCandidateConsumer:
+    """Threaded, bounded consumer with durable-completion acknowledgements."""
+
+    def __init__(
+        self,
+        service: CandidateProcessingService,
+        *,
+        config: MqttConsumerConfig | None = None,
+        client: Any | None = None,
+        metrics: OperationalMetrics | None = None,
+        health: HealthRegistry | None = None,
+    ) -> None:
+        self.service = service
+        self.config = config or MqttConsumerConfig()
+        self.client = client
+        self.metrics = metrics
+        self.health = health
+        self._queue: queue.Queue[MqttDelivery] = queue.Queue(maxsize=self.config.max_inflight)
+        self._stop = threading.Event()
+        self._workers: list[threading.Thread] = []
+        self._started = False
+        self._lock = threading.RLock()
+        if self.health is not None:
+            self.health.set_component("candidate-broker", HealthState.UNKNOWN)
+
+    @property
+    def queue_depth(self) -> int:
+        return self._queue.qsize()
+
+    @property
+    def ready(self) -> bool:
+        return self._started and not self._stop.is_set() and self.service.readiness()
+
+    def submit(self, delivery: MqttDelivery) -> bool:
+        """Enqueue without blocking; false means broker backpressure applied."""
+
+        if delivery.topic != self.config.topic:
+            delivery.dead_letter("unexpected_topic")
+            return False
+        if self._stop.is_set():
+            delivery.retry(delivery.attempts + 1)
+            return False
+        try:
+            self._queue.put_nowait(delivery)
+        except queue.Full:
+            if self.metrics is not None:
+                self.metrics.candidate_retry("backpressure")
+            delivery.retry(delivery.attempts + 1)
+            return False
+        self._record_queue()
+        return True
+
+    def start(self, *, workers: int | None = None) -> None:
+        with self._lock:
+            if self._started:
+                return
+            count = workers or min(4, self.config.max_inflight)
+            if count < 1:
+                raise ValueError("workers must be positive")
+            self._stop.clear()
+            self._workers = [
+                threading.Thread(target=self._run, name=f"candidate-worker-{i}", daemon=True)
+                for i in range(count)
+            ]
+            for worker in self._workers:
+                worker.start()
+            self._started = True
+            if self.client is not None:
+                self._bind_client()
+            if self.health is not None:
+                self.health.set_component("candidate-broker", HealthState.HEALTHY)
+
+    def stop(self, *, timeout: float = 10.0) -> None:
+        """Stop intake and wait for queued work to finish or retry."""
+
+        with self._lock:
+            if not self._started:
+                return
+            self._stop.set()
+            if self.client is not None:
+                loop_stop = getattr(self.client, "loop_stop", None)
+                if callable(loop_stop):
+                    loop_stop()
+        for worker in self._workers:
+            worker.join(timeout=max(timeout, 0.0))
+        with self._lock:
+            self._workers = []
+            self._started = False
+            self._record_queue()
+            if self.health is not None:
+                self.health.set_component("candidate-broker", HealthState.UNKNOWN)
+
+    def _run(self) -> None:
+        while not self._stop.is_set() or not self._queue.empty():
+            try:
+                delivery = self._queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            try:
+                self._handle(delivery)
+            finally:
+                self._queue.task_done()
+                self._record_queue()
+
+    def _handle(self, delivery: MqttDelivery) -> None:
+        try:
+            result = self.service.process_payload(delivery.payload)
+        except CandidateMessageError as exc:
+            delivery.dead_letter(type(exc).__name__)
+            if self.metrics is not None:
+                self.metrics.candidate_deadletter(type(exc).__name__)
+            return
+        except CandidateProcessingError as exc:
+            if delivery.attempts < self.config.retry_limit:
+                if self.metrics is not None:
+                    self.metrics.candidate_retry(type(exc).__name__)
+                delivery.retry(delivery.attempts + 1)
+            else:
+                delivery.dead_letter("retry_exhausted")
+                if self.metrics is not None:
+                    self.metrics.candidate_deadletter("retry_exhausted")
+            return
+        except Exception:
+            logger.exception("unexpected candidate consumer failure")
+            if delivery.attempts < self.config.retry_limit:
+                delivery.retry(delivery.attempts + 1)
+            else:
+                delivery.dead_letter("unexpected_error")
+            return
+        delivery.ack()
+        if self.metrics is not None and result.status == "duplicate":
+            self.metrics.candidate_message("duplicate")
+
+    def _record_queue(self) -> None:
+        if self.metrics is not None:
+            self.metrics.candidate_queue(self.queue_depth)
+
+    def _bind_client(self) -> None:
+        """Bind a paho-compatible client without importing paho in CPU mode."""
+
+        assert self.client is not None
+
+        def on_connect(
+            client: Any, _userdata: Any, _flags: Any, reason_code: Any, *_args: Any
+        ) -> None:
+            if int(reason_code) != 0:
+                if self.health is not None:
+                    self.health.set_component(
+                        "candidate-broker", HealthState.DEGRADED, message="broker connect failed"
+                    )
+                return
+            client.subscribe(self.config.topic, qos=1)
+            if self.health is not None:
+                self.health.set_component("candidate-broker", HealthState.HEALTHY)
+
+        def on_message(_client: Any, _userdata: Any, message: Any) -> None:
+            ack = getattr(message, "ack", lambda: None)
+            delivery = MqttDelivery(
+                payload=message.payload,
+                topic=str(message.topic),
+                message_id=str(getattr(message, "mid", "")),
+                ack=ack,
+                retry=lambda attempt: self._republish(message, attempt),
+                dead_letter=lambda reason: self._dead_letter(message, reason),
+            )
+            self.submit(delivery)
+
+        self.client.on_connect = on_connect
+        self.client.on_message = on_message
+        loop_start = getattr(self.client, "loop_start", None)
+        if callable(loop_start):
+            loop_start()
+
+    def _republish(self, message: Any, attempt: int) -> None:
+        publish = getattr(self.client, "publish", None)
+        if not callable(publish):
+            return
+        properties = getattr(message, "properties", None)
+        publish(self.config.topic, message.payload, qos=1, retain=False, properties=properties)
+        ack = getattr(message, "ack", None)
+        if callable(ack):
+            ack()
+        del attempt
+
+    def _dead_letter(self, message: Any, reason: str) -> None:
+        publish = getattr(self.client, "publish", None)
+        if not callable(publish):
+            return
+        # Dead-letter payloads contain metadata only.  Even malformed input is
+        # not copied to another topic, so a producer cannot smuggle pixels or
+        # provider text into the audit/broker plane.
+        import json
+
+        payload = json.dumps(
+            {
+                "reason": reason,
+                "topic": str(getattr(message, "topic", self.config.topic)),
+                "message_id": str(getattr(message, "mid", "")),
+            }
+        ).encode()
+        publish(self.config.dead_letter_topic, payload, qos=1, retain=False)
+        ack = getattr(message, "ack", None)
+        if callable(ack):
+            ack()
+
+
+__all__ = ["MqttCandidateConsumer", "MqttConsumerConfig", "MqttDelivery"]

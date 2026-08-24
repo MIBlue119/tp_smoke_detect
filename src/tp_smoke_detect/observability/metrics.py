@@ -365,6 +365,28 @@ class OperationalMetrics:
         r.gauge("smoke_batch_fill_ratio", "Media batch fill ratio")
         r.counter("smoke_audio_requests_total", "Audio requests", ("status",))
         r.counter(
+            "smoke_candidate_messages_total",
+            "Candidate messages by terminal handling status",
+            ("status",),
+        )
+        r.counter(
+            "smoke_candidate_retries_total",
+            "Candidate delivery retries",
+            ("reason",),
+        )
+        r.counter(
+            "smoke_candidate_deadletters_total",
+            "Candidate messages quarantined as poison messages",
+            ("reason",),
+        )
+        r.gauge("smoke_candidate_queue_depth", "Candidate consumer queue depth")
+        r.gauge("smoke_candidate_ready", "Candidate processor readiness")
+        r.histogram(
+            "smoke_candidate_processing_seconds",
+            "Candidate processing duration",
+            ("status",),
+        )
+        r.counter(
             "smoke_degraded_transitions_total",
             "Component degraded transitions",
             ("component", "state"),
@@ -526,6 +548,24 @@ class OperationalMetrics:
 
     def audio_request(self, status: str) -> None:
         self.registry.inc("smoke_audio_requests_total", status=status)
+
+    def candidate_message(self, status: str) -> None:
+        self.registry.inc("smoke_candidate_messages_total", status=status)
+
+    def candidate_retry(self, reason: str) -> None:
+        self.registry.inc("smoke_candidate_retries_total", reason=reason)
+
+    def candidate_deadletter(self, reason: str) -> None:
+        self.registry.inc("smoke_candidate_deadletters_total", reason=reason)
+
+    def candidate_queue(self, depth: int) -> None:
+        self.registry.set("smoke_candidate_queue_depth", float(depth))
+
+    def candidate_ready(self, ready: bool) -> None:
+        self.registry.set("smoke_candidate_ready", 1.0 if ready else 0.0)
+
+    def candidate_processing(self, status: str, seconds: float) -> None:
+        self.registry.observe("smoke_candidate_processing_seconds", seconds, status=status)
 
     def degraded(self, component: str, state: str = "degraded") -> None:
         self.registry.inc("smoke_degraded_transitions_total", component=component, state=state)
