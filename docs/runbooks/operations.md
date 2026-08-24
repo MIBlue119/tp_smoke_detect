@@ -66,6 +66,24 @@ is attached to the site change record. A request to /v1/audio/requests must be
 expected to return a suppression reason when muted, shadowed, unclear,
 cooldown-limited, over cap, or suspended.
 
+## GPU profile health and degraded mode
+
+For the RTX 3090 lab profile, inspect every boundary before calling the
+profile ready:
+
+    docker compose --profile gpu-rtx3090 -f deploy/compose.yaml ps
+    docker compose --profile gpu-rtx3090 -f deploy/compose.yaml logs --tail=100 \
+      gpu-preflight baseline-model media-gpu candidate-consumer gpu-readiness
+    curl --fail http://127.0.0.1:8000/metrics
+
+`gpu-readiness` remains degraded until the immutable one-stream receipt is
+`one-stream-ready`, Triton/core dependencies are healthy, and the candidate
+consumer creates its shared readiness file. GPU OOM, queue expiry, model
+timeout, revision mismatch, stalled input, or malformed output must leave the
+affected camera/model degraded and suppress audio. The current checked-in
+profile is `gpu-capable-scaffold-unqualified`; do not call it lab-qualified or
+production-capable until GPU-107's real R11 and R12 receipts are attached.
+
 ## Backup and restore
 
 The host-side command below is the executable deployment backup path. Run it

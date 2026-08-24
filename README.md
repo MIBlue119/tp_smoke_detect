@@ -15,6 +15,13 @@ model quality, 24-hour soak, site retention, agency policy, legal/procurement,
 and physical-audio gates remain separate qualification work. See the release
 receipt in `docs/dev_artifacts/qualification/` before changing this posture.
 
+The mandatory GPU implementation has a CPU-runnable vertical-slice scaffold
+covering typed DeepStream-shaped candidates, deterministic decisions, audit
+persistence, bounded metrics, and muted shadow audio. It is explicitly
+`gpu-capable-scaffold-unqualified` until GPU-107 proves real NVDEC/TensorRT/
+Triton execution in R11 and R12; CUDA visibility, Compose parsing, or a fake
+provider cannot satisfy those gates.
+
 ## New-agent quickstart
 
 From a clean checkout on Python 3.11 or 3.12:

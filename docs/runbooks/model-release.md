@@ -44,6 +44,13 @@ deploy/image-pins.yaml, attach SBOMs, and run target-host one-stream and
 model timeout rate, and failure isolation. A CPU or synthetic result is not a
 capacity receipt.
 
+The baseline role combination is PeopleNet Transformer person detection,
+NvDCF tracking, MediaPipe Tasks pose/hand GPU plugins, and a SigLIP 2 crop
+head. The optional LFM2-VL reviewer is disabled until its independent image,
+license, memory, latency, and sealed-evaluation receipts pass. Role revisions
+are copied into candidate receipts and durable decisions; unknown or
+mismatched revisions are rejected before audio policy.
+
 ## Promotion
 
 Promotion is a controlled registry operation:
@@ -79,6 +86,13 @@ Rollback is preferred to in-place edits:
 
 If the previous release is unavailable or its provenance is incomplete, keep
 the system shadow/muted and escalate; do not substitute an unreviewed model.
+
+The integration rehearsal is CPU-runnable and verifies audit revision
+propagation plus fail-closed missing-receipt handling:
+
+    uv run pytest tests/e2e/test_gpu_vertical_slice.py -q
+
+This rehearsal is not a model promotion or GPU qualification receipt.
 
 ## Release blockers
 

@@ -40,3 +40,5 @@ def test_gpu_compose_has_internal_isolated_services() -> None:
     assert "capabilities: [gpu]" in compose
     assert "./../model-repository:/models:ro" in compose
     assert "./triton-entrypoint.sh:/opt/smoke-detect/bin/triton-entrypoint:ro" in compose
+    assert "gpu_runtime_state:/run/gpu-state" in compose
+    assert "SMOKE_GPU_CANDIDATE_READY_FILE: /run/gpu-state/candidate-ready" in compose

@@ -14,6 +14,9 @@ from typing import Any
 RECEIPT = Path(
     os.environ.get("SMOKE_GPU_READINESS_RECEIPT", "/run/smoke-detect/gpu-readiness.json")
 )
+CANDIDATE_READY_FILE = Path(
+    os.environ.get("SMOKE_GPU_CANDIDATE_READY_FILE", "/run/gpu-state/candidate-ready")
+)
 DEPENDENCIES = (
     "http://smoke-detect:8000/health/ready",
     "http://baseline-model:8000/v2/health/ready",
@@ -28,6 +31,8 @@ def readiness() -> tuple[bool, dict[str, Any]]:
             errors.append("one-stream receipt is not one-stream-ready")
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         errors.append(f"GPU receipt unavailable: {exc}")
+    if not CANDIDATE_READY_FILE.is_file():
+        errors.append(f"candidate consumer is not ready: {CANDIDATE_READY_FILE}")
     for url in DEPENDENCIES:
         try:
             with urllib.request.urlopen(url, timeout=1) as response:  # noqa: S310 - fixed internal URL

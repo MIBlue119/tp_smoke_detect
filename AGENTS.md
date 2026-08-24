@@ -112,3 +112,40 @@ ask the Sol reviewer to run the structured code review. Resolve high/critical
 findings before shipping. A release branch is not a production release until
 its checklist, review receipt, branch synchronization, and external approvals
 are complete.
+
+## Mandatory GPU lane
+
+GPU tickets are implemented in dependency order: GPU-100 evidence contract,
+GPU-101 stack/import, GPU-102 DeepStream media, GPU-103 model provenance,
+GPU-104 candidate service, GPU-105 offline deployment, GPU-106 data/evaluation,
+GPU-107 qualification, GPU-108 observability, then GPU-109 integration. The
+baseline combination is PeopleNet Transformer + NvDCF + MediaPipe Tasks
+pose/hand GPU plugins + SigLIP 2 crop head. LFM2-VL is an optional disabled
+reviewer and must never be treated as the detector.
+
+The GPU profile is `gpu-capable-scaffold-unqualified` until GPU-107 records
+real R11 one-stream and R12 RTX 3090 20-stream evidence. Never promote a
+Compose parse, CUDA visibility check, fake provider, metadata-only replay, or
+CPU vertical slice into a lab or production claim. Production additionally
+requires the accepted professional-GPU R13 24-hour receipt and site/legal,
+retention, and audio approvals.
+
+Approved-host GPU commands are opt-in:
+
+```bash
+scripts/qualify_gpu_host.sh --profile rtx3090
+uv run python scripts/qualify_gpu.py --profile rtx3090 --streams 1 --real-runtime
+uv run python scripts/qualify_gpu.py --profile rtx3090 --streams 20 --duration 2h --analysis-fps 10
+```
+
+The CPU-runnable integration seam is:
+
+```bash
+uv run pytest tests/e2e/test_gpu_vertical_slice.py -q
+```
+
+It proves typed candidate-to-decision/audit/shadow-audio wiring and fail-closed
+missing-receipt behavior only. Keep GPU receipts, model manifests, SBOMs, and
+qualification blockers under `docs/dev_artifacts/qualification/`; never commit
+model weights, TensorRT engines, raw media, credentials, or identifying
+screenshots.

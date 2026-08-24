@@ -248,18 +248,19 @@ services:
     restart: unless-stopped
     init: true
     entrypoint: ["python", "-m", "tp_smoke_detect.cli"]
-    command: ["serve-candidates", "--config", "/etc/smoke-detect/runtime.yaml", "--ready-file", "/run/smoke-detect/candidate-ready"]
+    command: ["serve-candidates", "--config", "/etc/smoke-detect/runtime.yaml", "--ready-file", "/run/gpu-state/candidate-ready"]
     read_only: true
     user: "10001:10001"
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m", "/run/smoke-detect:rw,noexec,nosuid,size=1m"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
     environment:
       SMOKE_DETECT_POLICY_CONFIG: /etc/smoke-detect/policy.yaml
       SMOKE_DETECT_CAMERAS_CONFIG: /etc/smoke-detect/cameras.yaml
     volumes:
       - smoke_state:/var/lib/smoke-detect/state
       - smoke_artifacts:/var/lib/smoke-detect/artifacts
+      - gpu_runtime_state:/run/gpu-state
       - ./../configs/runtime.gpu-rtx3090.yaml:/etc/smoke-detect/runtime.yaml:ro
       - ./../configs/policy.example.yaml:/etc/smoke-detect/policy.yaml:ro
       - ./../configs/camera.example.yaml:/etc/smoke-detect/cameras.yaml:ro
@@ -304,8 +305,10 @@ services:
     tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
     environment:
       SMOKE_GPU_READINESS_RECEIPT: /run/smoke-detect/gpu-readiness.json
+      SMOKE_GPU_CANDIDATE_READY_FILE: /run/gpu-state/candidate-ready
     volumes:
       - ./../docs/dev_artifacts/qualification:/run/smoke-detect:ro
+      - gpu_runtime_state:/run/gpu-state:ro
     depends_on:
       smoke-detect:
         condition: service_healthy
@@ -330,6 +333,7 @@ volumes:
   prometheus_data:
   smoke_state:
   smoke_artifacts:
+  gpu_runtime_state:
 
 networks:
   site_net:
