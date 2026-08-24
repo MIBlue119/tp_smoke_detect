@@ -18,6 +18,7 @@ import platform
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -137,6 +138,15 @@ def _load_manual_review(path: Path, run_id: str) -> tuple[list[dict[str, Any]], 
             }
         )
     return normalized, review
+
+
+def _validate_review_hashes(
+    review: Mapping[str, Any], annotation_sha256: str, video_sha256: str
+) -> None:
+    if review.get("pre_final_annotation_sha256") != annotation_sha256:
+        raise RuntimeError("manual review annotation claim does not match pre-final evidence")
+    if review.get("rendered_video_sha256") != video_sha256:
+        raise RuntimeError("manual review video claim does not match rendered output")
 
 
 def _environment_receipt() -> dict[str, Any]:
@@ -315,15 +325,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     write_receipt(media_receipt_path, media_receipt)
     # The review is immutable companion evidence.  It is copied only after
     # the output hash exists, so the final manifest can bind all three files.
-    if os.environ.get("DEMO_PREPARE_REVIEW") != "1" and review_payload[
-        "pre_final_annotation_sha256"
-    ] != sha256_file(annotation_path):
-        raise RuntimeError("manual review annotation claim does not match pre-final evidence")
-    if (
-        os.environ.get("DEMO_PREPARE_REVIEW") != "1"
-        and review_payload["rendered_video_sha256"] != media_receipt.output_sha256
-    ):
-        raise RuntimeError("manual review video claim does not match rendered output")
+    if os.environ.get("DEMO_PREPARE_REVIEW") != "1":
+        _validate_review_hashes(
+            review_payload, sha256_file(annotation_path), media_receipt.output_sha256
+        )
     review_path = output_root / "manual-review.json"
     review_path.write_bytes(args.manual_review.read_bytes())
     contact_sheet = output_root / "contact-sheet.jpg"
@@ -368,7 +373,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "throughput_fps": frame_count / elapsed if elapsed else 0.0,
         "runtime": runtime.to_dict(),
         "adapter_receipts": [pose.receipt().to_dict(), cigarette.receipt().to_dict()],
-        "export_backends": {"onnx": "not_attempted_in_u5", "tensorrt": "not_attempted_in_u5"},
+        "export_backends": {
+            "onnx": "converted_and_used" if boundary.get("safe_artifacts") else "not_available",
+            "tensorrt": "not_used",
+        },
         "event_count": len(result.events),
         "event_states": sorted({event.state.value for event in result.events}),
         "manual_review_count": len(run_receipt.manual_review),

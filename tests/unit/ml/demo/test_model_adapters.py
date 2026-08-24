@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
+import types
 from pathlib import Path
 
 import ml.demo.models as models
@@ -49,7 +51,8 @@ def test_host_loader_rejects_pickle_and_accepts_onnx_without_pickle_load(
     safe.write_bytes(b"onnx")
     safe_spec = ModelSpec("person_pose", "r1", safe, hashlib.sha256(b"onnx").hexdigest(), 4)
     sentinel = object()
-    monkeypatch.setattr("ultralytics.YOLO", lambda *args, **kwargs: sentinel)
+    fake_ultralytics = types.SimpleNamespace(YOLO=lambda *args, **kwargs: sentinel)
+    monkeypatch.setitem(sys.modules, "ultralytics", fake_ultralytics)
     assert models._load_yolo(safe_spec, enforce_isolation=False) is sentinel
 
 
