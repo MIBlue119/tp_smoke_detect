@@ -1,0 +1,42 @@
+{
+  "status": "passed",
+  "source_artifact_id": "source/shibuya-GByZa0qbA8A.mp4",
+  "frame_shape": [480, 640, 3],
+  "runtime": {
+    "framework": "pytorch",
+    "framework_version": "2.9.1+cu128",
+    "cuda_version": "12.8",
+    "device_name": "NVIDIA GeForce RTX 3090",
+    "compute_capability": "8.6",
+    "device_index": 0,
+    "fake_provider": false
+  },
+  "models": [
+    {
+      "role": "person_pose",
+      "model_revision": "ultralytics-assets-release-v8.3.0/yolo11n-pose.pt",
+      "artifact_id": "models/yolo11n-pose-v8.3.0.pt",
+      "artifact_sha256": "869e83fcdffdc7371fa4e34cd8e51c838cc729571d1635e5141e3075e9319dc0",
+      "device": "cuda:0",
+      "frames": 1,
+      "detections": 10,
+      "elapsed_ms": 1769.2451,
+      "peak_vram_bytes": 44662272,
+      "fake_provider": false
+    },
+    {
+      "role": "cigarette_detector",
+      "model_revision": "12a54cda2ca031e2b96a486bc288e957e56f51c8",
+      "artifact_id": "models/heiher-smoking-detection-12a54cda.pt",
+      "artifact_sha256": "0ef558d3cf049d0acbb3f2322bc9e4e53db1a107426e3669622176c30c054d82",
+      "device": "cuda:0",
+      "frames": 1,
+      "detections": 0,
+      "elapsed_ms": 402.6033,
+      "peak_vram_bytes": 186845184,
+      "fake_provider": false
+    }
+  ],
+  "qualification_scope": "one-frame-real-cuda-smoke-only",
+  "production_qualification": false
+}
