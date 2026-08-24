@@ -50,3 +50,20 @@ as delivery proof in future reviews.
 ## related commit
 
 Pending commit on `feature/gpu-mandatory-release`.
+
+## follow-up closure
+
+The second trust-boundary pass found three remaining P1s: Compose did not
+provide the digest/key consumed by the media entrypoint, telemetry accepted
+caller-controlled provenance and host sample arrays, and a signed minimal
+source could be promoted to readiness. The fix wires `SMOKE_GPU_IMAGE_DIGEST`
+and the read-only `gpu_receipt_signing_key` secret, adds a fail-fast Compose
+preflight, authenticates telemetry/fault rows with a separate runtime signer
+and PID/start-time/host/challenge binding, removes external sample injection,
+and validates every required qualification section before signing or accepting
+one-stream readiness.
+
+Verification: full pytest 214 passed with one expected target-hardware skip;
+Ruff format/check and `mypy src ml tests` passed; missing-key preflight exits
+78 with an actionable message; adversarial forged telemetry and minimal signed
+source probes remain blocked.

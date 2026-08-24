@@ -45,6 +45,28 @@ def test_gpu_compose_has_internal_isolated_services() -> None:
     assert "SMOKE_GPU_CANDIDATE_READY_FILE: /run/gpu-state/candidate-ready" in compose
     assert "/opt/smoke-detect/bin/media-publisher" in compose
     assert "test -r /run/gpu-state/candidate-ready" in compose
+    assert "SMOKE_GPU_IMAGE_DIGEST" in compose
+    assert "gpu_receipt_signing_key" in compose
+    assert "mode: 0400" in compose
+
+
+def test_gpu_compose_preflight_fails_before_docker_when_secret_is_absent(tmp_path: Path) -> None:
+    import os
+    import subprocess
+
+    env = os.environ.copy()
+    env["SMOKE_GPU_IMAGE_DIGEST"] = "sha256:" + "a" * 64
+    env["SMOKE_GPU_RECEIPT_SIGNING_KEY_FILE"] = str(tmp_path / "missing-key")
+    result = subprocess.run(
+        [str(ROOT / "scripts/preflight_gpu_compose.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 78
+    assert "receipt signing key is unreadable" in result.stderr
 
 
 def test_readiness_receipt_requires_bound_runtime_identity_and_freshness() -> None:

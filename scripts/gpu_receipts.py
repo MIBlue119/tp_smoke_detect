@@ -8,6 +8,145 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+QUALIFICATION_REQUIRED_KEYS = {
+    "schema_version",
+    "ticket",
+    "generated_at",
+    "status",
+    "qualification_label",
+    "profile",
+    "claim_boundary",
+    "requested_gate",
+    "host",
+    "image",
+    "models",
+    "replay",
+    "runtime",
+    "telemetry",
+    "fault_injection",
+    "commands",
+    "errors",
+    "recovery_steps",
+}
+
+
+def _is_non_empty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _is_sha256(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    candidate = value.removeprefix("sha256:")
+    return len(candidate) == 64 and all(char in "0123456789abcdef" for char in candidate)
+
+
+def validate_qualification_source(source: Any) -> list[str]:
+    """Validate the complete, executor-produced source before receipt derivation.
+
+    A signature authenticates bytes, not meaning.  This structural gate is
+    intentionally strict so a caller cannot sign a small hand-written object
+    containing only the fields used by the old readiness predicate.
+    """
+
+    errors: list[str] = []
+    if not isinstance(source, dict):
+        return ["qualification source must be a JSON object"]
+    missing = sorted(QUALIFICATION_REQUIRED_KEYS - set(source))
+    if missing:
+        errors.append(f"qualification source is incomplete: missing {', '.join(missing)}")
+    if source.get("schema_version") != "gpu.qualification-receipt.v1":
+        errors.append("qualification source schema_version is invalid")
+    if source.get("ticket") != "GPU-107":
+        errors.append("qualification source ticket is invalid")
+    if source.get("status") != "qualified":
+        errors.append("qualification source is not qualified")
+    if source.get("errors") != []:
+        errors.append("qualification source errors must be empty")
+    gate = source.get("requested_gate")
+    if (
+        not isinstance(gate, dict)
+        or gate.get("streams") != 1
+        or gate.get("real_runtime") is not True
+    ):
+        errors.append("qualification source must be a real one-stream gate")
+
+    host = source.get("host")
+    host_identity = host.get("identity") if isinstance(host, dict) else None
+    if not isinstance(host_identity, dict) or not all(
+        _is_non_empty_string(host_identity.get(key))
+        for key in ("gpu", "driver", "compute_capability")
+    ):
+        errors.append("qualification source host identity is incomplete")
+
+    image = source.get("image")
+    if not isinstance(image, dict) or not _is_non_empty_string(image.get("image")):
+        errors.append("qualification source image identity is missing")
+    if not isinstance(image, dict) or not _is_sha256(image.get("digest")):
+        errors.append("qualification source image digest is missing")
+
+    models = source.get("models")
+    if not isinstance(models, dict) or models.get("status") != "ready":
+        errors.append("qualification source model readiness is missing")
+    if not isinstance(models, dict) or not _is_sha256(models.get("manifest_sha256")):
+        errors.append("qualification source model manifest hash is missing")
+
+    replay = source.get("replay")
+    if not isinstance(replay, dict) or replay.get("status") != "ready":
+        errors.append("qualification source replay is not sealed and ready")
+    if not isinstance(replay, dict) or not _is_sha256(replay.get("manifest_sha256")):
+        errors.append("qualification source replay manifest hash is missing")
+    policy = replay.get("media_root_policy") if isinstance(replay, dict) else None
+    if not isinstance(policy, dict) or not _is_sha256(policy.get("root_sha256")):
+        errors.append("qualification source replay media-root binding is missing")
+
+    runtime = source.get("runtime")
+    runtime_metrics = runtime.get("metrics") if isinstance(runtime, dict) else None
+    runtime_command = runtime.get("command") if isinstance(runtime, dict) else None
+    if not isinstance(runtime, dict) or runtime.get("status") != "passed":
+        errors.append("qualification source runtime did not pass")
+    if not isinstance(runtime_command, dict) or runtime_command.get("status") != "passed":
+        errors.append("qualification source runtime command evidence is missing")
+    if not isinstance(runtime_metrics, dict):
+        errors.append("qualification source runtime metrics are missing")
+
+    telemetry = source.get("telemetry")
+    provenance = telemetry.get("provenance") if isinstance(telemetry, dict) else None
+    capture = telemetry.get("executor_capture") if isinstance(telemetry, dict) else None
+    if not isinstance(telemetry, dict) or telemetry.get("status") not in {None, "passed"}:
+        errors.append("qualification source telemetry status is invalid")
+    if not isinstance(provenance, dict) or provenance.get("trusted") is not True:
+        errors.append("qualification source telemetry is not trusted runtime evidence")
+    if not isinstance(capture, dict) or capture.get("trusted") is not True:
+        errors.append("qualification source telemetry executor capture is not trusted")
+    if not isinstance(capture, dict) or not all(
+        _is_non_empty_string(capture.get(key)) for key in ("host_binding", "runtime_binding")
+    ):
+        errors.append("qualification source telemetry process/host binding is missing")
+    if not isinstance(telemetry, dict) or not isinstance(telemetry.get("cameras"), dict):
+        errors.append("qualification source per-camera telemetry is missing")
+    elif len(telemetry["cameras"]) != 1:
+        errors.append("qualification source must contain exactly one camera telemetry row")
+
+    fault = source.get("fault_injection")
+    fault_result = fault.get("result") if isinstance(fault, dict) else None
+    if not isinstance(fault, dict) or fault.get("status") != "passed":
+        errors.append("qualification source fault-isolation evidence is missing")
+    if not isinstance(fault_result, dict) or fault_result.get("status") != "passed":
+        errors.append("qualification source fault command evidence is missing")
+    if not isinstance(fault_result, dict) or not _is_non_empty_string(
+        fault_result.get("attestation")
+    ):
+        errors.append("qualification source fault attestation is missing")
+
+    commands = source.get("commands")
+    if not isinstance(commands, list) or not commands:
+        errors.append("qualification source command evidence is missing")
+    recovery = source.get("recovery_steps")
+    if not isinstance(recovery, list) or not recovery:
+        errors.append("qualification source recovery evidence is missing")
+    return list(dict.fromkeys(errors))
+
 
 def canonical_receipt_bytes(value: Any) -> bytes:
     """Return the stable bytes used for receipt lineage and signatures."""
@@ -17,6 +156,20 @@ def canonical_receipt_bytes(value: Any) -> bytes:
 
 def receipt_sha256(value: Any) -> str:
     return hashlib.sha256(canonical_receipt_bytes(value)).hexdigest()
+
+
+def canonical_telemetry_bytes(value: Any) -> bytes:
+    """Canonicalize a telemetry row without its detached authentication tag."""
+
+    if not isinstance(value, dict):
+        return canonical_receipt_bytes(value)
+    unsigned = dict(value)
+    unsigned.pop("signature_hmac_sha256", None)
+    return canonical_receipt_bytes(unsigned)
+
+
+def telemetry_hmac(value: Any, signing_key: bytes) -> str:
+    return hmac.new(signing_key, canonical_telemetry_bytes(value), hashlib.sha256).hexdigest()
 
 
 def build_one_stream_receipt(
@@ -32,18 +185,9 @@ def build_one_stream_receipt(
     """
 
     source = json.loads(json.dumps(qualification, sort_keys=True))
+    source_errors = validate_qualification_source(source)
     source_digest = receipt_sha256(source)
-    ready = (
-        signing_key is not None
-        and source.get("schema_version") == "gpu.qualification-receipt.v1"
-        and source.get("status") == "qualified"
-        and source.get("requested_gate", {}).get("streams") == 1
-        and source.get("runtime", {}).get("status") == "passed"
-        and not source.get("errors")
-        and source.get("replay", {}).get("status") == "ready"
-        and source.get("telemetry", {}).get("provenance", {}).get("trusted") is True
-        and source.get("fault_injection", {}).get("status") == "passed"
-    )
+    ready = signing_key is not None and not source_errors
     result: dict[str, Any] = {
         "schema_version": "gpu.one-stream-receipt.v1",
         "status": "one-stream-ready" if ready else "blocked",
@@ -57,6 +201,8 @@ def build_one_stream_receipt(
         "host": source.get("host", {}).get("identity", {}),
         "media_root_policy": source.get("replay", {}).get("media_root_policy"),
     }
+    if source_errors:
+        result["validation_errors"] = source_errors
     if signing_key:
         result["signature_key_id"] = signing_key_id
         result["signature_hmac_sha256"] = hmac.new(
@@ -93,6 +239,7 @@ def validate_one_stream_receipt(
         errors.append("one-stream receipt must embed its qualification source receipt")
         errors.append("one-stream receipt is not bound to the real runtime")
     else:
+        errors.extend(validate_qualification_source(source))
         if source.get("schema_version") != "gpu.qualification-receipt.v1":
             errors.append("one-stream source receipt has the wrong schema")
         if source.get("status") != "qualified":
@@ -159,6 +306,9 @@ def validate_one_stream_receipt(
 __all__ = [
     "build_one_stream_receipt",
     "canonical_receipt_bytes",
+    "canonical_telemetry_bytes",
     "receipt_sha256",
+    "telemetry_hmac",
+    "validate_qualification_source",
     "validate_one_stream_receipt",
 ]

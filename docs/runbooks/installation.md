@@ -94,8 +94,18 @@ not qualify NGC availability, model quality, 20-camera capacity, or production
 hardware. Import approved image archives and the model store before starting:
 
     scripts/import_gpu_bundle.sh /approved/tp-smoke-detect-gpu-bundle
-    docker compose --profile gpu-rtx3090 -f deploy/compose.yaml config --quiet
+    export SMOKE_GPU_IMAGE_DIGEST=c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759
+    export SMOKE_GPU_RECEIPT_SIGNING_KEY_FILE=/run/site-secrets/tp-smoke-detect/gpu_receipt_signing_key
+    scripts/preflight_gpu_compose.sh
     docker compose --profile gpu-rtx3090 -f deploy/compose.yaml up -d
+
+`scripts/preflight_gpu_compose.sh` must pass before Docker is started. It fails
+with an actionable message when `SMOKE_GPU_IMAGE_DIGEST` or the read-only
+receipt signing key is absent. The key is mounted only into `media-gpu` at
+`/run/secrets/gpu_receipt_signing_key`; provision it from the site secret store
+using `deploy/secrets/gpu_receipt_signing_key.txt.example` as a shape reference.
+The telemetry/fault runtime signer used by GPU-107 is a separate key and must
+never be reused as a general application configuration secret.
 
 Startup is fail-closed. `gpu-preflight` requires resolved image digests, SBOM
 receipts, complete model/engine hashes, and a separately produced

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.gpu_receipts import validate_one_stream_receipt
+from scripts.gpu_receipts import build_one_stream_receipt, validate_one_stream_receipt
 from scripts.qualify_gpu import evaluate_telemetry, parse_telemetry, replay_probe
 
 
@@ -53,3 +53,70 @@ def test_one_stream_receipt_requires_hashed_qualification_lineage() -> None:
         }
     )
     assert any("embedded lineage" in error or "source receipt" in error for error in errors)
+
+
+def test_minimal_signed_source_cannot_be_promoted_to_one_stream_ready() -> None:
+    source = {
+        "schema_version": "gpu.qualification-receipt.v1",
+        "status": "qualified",
+        "requested_gate": {"streams": 1},
+        "runtime": {"status": "passed"},
+        "replay": {"status": "ready"},
+        "telemetry": {"provenance": {"trusted": True}},
+        "fault_injection": {"status": "passed"},
+    }
+    receipt = build_one_stream_receipt(source, signing_key=b"test-key")
+
+    assert receipt["status"] == "blocked"
+    assert receipt["validation_errors"]
+    assert validate_one_stream_receipt(receipt, signing_key=b"test-key")
+
+
+def test_caller_injected_samples_never_satisfy_executor_capture_gate() -> None:
+    metrics = parse_telemetry(
+        [
+            json.dumps(
+                {
+                    "schema_version": "gpu.telemetry.v1",
+                    "producer": "tp.smoke-detect.gpu-runtime",
+                    "receipt_id": "forged",
+                    "runtime_pid": 123,
+                    "sequence": 0,
+                    "timestamp_ns": 1,
+                    "camera_id": "camera-01",
+                    "counters": {
+                        "scheduled_samples": 100,
+                        "processed_samples": 100,
+                        "dropped_samples": 0,
+                    },
+                    "measurements": [{"timestamp_ns": 1}],
+                    "model_revisions": {
+                        "person_detector": "x",
+                        "pose_landmarker": "x",
+                        "hand_landmarker": "x",
+                        "crop_classifier": "x",
+                    },
+                    "fault_isolation": {
+                        "status": "passed",
+                        "producer": "tp.smoke-detect.fault-harness",
+                        "receipt_id": "forged",
+                    },
+                }
+            )
+        ],
+        expected_runtime_pid=123,
+        expected_runtime_start_ticks="1",
+        expected_host_binding="host",
+        expected_challenge="challenge",
+        signing_key=b"runtime-key",
+    )
+    metrics["external_gpu_samples"] = [{"gpu_utilization": 100}]
+
+    errors = evaluate_telemetry(
+        metrics,
+        streams=1,
+        duration_seconds=10,
+        analysis_fps=10,
+    )
+
+    assert any("authenticated qualification-executor" in error for error in errors)

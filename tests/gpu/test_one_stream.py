@@ -41,6 +41,8 @@ def test_runtime_timeout_is_recorded_without_claiming_success() -> None:
     assert result.status == "timeout"
     assert result.returncode is not None
     assert metrics["samples"] == 0
+    assert "external_gpu_samples" not in metrics
+    assert metrics["executor_capture"]["trusted"] is False
 
 
 def test_telemetry_thresholds_reject_field_name_only_or_slow_runtime() -> None:

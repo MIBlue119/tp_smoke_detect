@@ -13,14 +13,18 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
+import os
 import re
+import secrets
 import shlex
 import signal
 import subprocess
 import sys
 import time
 from collections.abc import Iterable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from math import ceil
@@ -29,7 +33,7 @@ from typing import Any
 
 import yaml
 from ml.registry.model_repository import ModelRepositoryManifest, verify_local_artifact
-from scripts.gpu_receipts import build_one_stream_receipt
+from scripts.gpu_receipts import build_one_stream_receipt, telemetry_hmac
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_IMAGE = (
@@ -136,6 +140,27 @@ def hash_json(value: Any) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
     ).hexdigest()
+
+
+def host_binding() -> str:
+    """Return a non-identifying binding stable for this qualification process."""
+
+    machine_id = ""
+    with suppress(OSError):
+        machine_id = Path("/etc/machine-id").read_text(encoding="utf-8").strip()
+    return hashlib.sha256(f"{os.uname().nodename}:{machine_id}".encode()).hexdigest()
+
+
+def process_start_ticks(pid: int) -> str:
+    """Read Linux process start ticks, preventing PID reuse from passing a receipt."""
+
+    raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    fields = raw.rsplit(") ", 1)[1].split()
+    return fields[19]
+
+
+def runtime_binding(pid: int, start_ticks: str) -> str:
+    return f"pid:{pid}:start:{start_ticks}"
 
 
 def load_document(path: Path) -> tuple[Any | None, list[str]]:
@@ -368,7 +393,15 @@ def replay_probe(
     return result
 
 
-def parse_telemetry(lines: Iterable[str]) -> dict[str, Any]:
+def parse_telemetry(
+    lines: Iterable[str],
+    *,
+    expected_runtime_pid: int | None = None,
+    expected_runtime_start_ticks: str | None = None,
+    expected_host_binding: str | None = None,
+    expected_challenge: str | None = None,
+    signing_key: bytes | None = None,
+) -> dict[str, Any]:
     """Parse only runtime-owned telemetry while retaining rejected rows.
 
     A qualification command may read stdout from an arbitrary process, so a
@@ -406,6 +439,41 @@ def parse_telemetry(lines: Iterable[str]) -> dict[str, Any]:
             reasons.append("telemetry receipt_id is missing")
         if not isinstance(value.get("runtime_pid"), int) or value["runtime_pid"] <= 0:
             reasons.append("telemetry runtime_pid is missing")
+        if expected_runtime_pid is None or value.get("runtime_pid") != expected_runtime_pid:
+            reasons.append("telemetry runtime process is not the launched qualification process")
+        if (
+            not isinstance(value.get("runtime_start_ticks"), str)
+            or not value["runtime_start_ticks"].strip()
+        ):
+            reasons.append("telemetry runtime start binding is missing")
+        elif (
+            expected_runtime_start_ticks is not None
+            and value.get("runtime_start_ticks") != expected_runtime_start_ticks
+        ):
+            reasons.append("telemetry runtime start binding does not match the launched process")
+        if not isinstance(value.get("host_binding"), str) or not value["host_binding"].strip():
+            reasons.append("telemetry host binding is missing")
+        elif (
+            expected_host_binding is not None and value.get("host_binding") != expected_host_binding
+        ):
+            reasons.append("telemetry host binding does not match the qualification host")
+        if (
+            not isinstance(value.get("qualification_challenge"), str)
+            or not value["qualification_challenge"].strip()
+        ):
+            reasons.append("telemetry qualification challenge is missing")
+        elif (
+            expected_challenge is not None
+            and value.get("qualification_challenge") != expected_challenge
+        ):
+            reasons.append("telemetry qualification challenge does not match this run")
+        signature = value.get("signature_hmac_sha256")
+        if signing_key is None:
+            reasons.append("telemetry signing key is unavailable")
+        elif not isinstance(signature, str) or not hmac.compare_digest(
+            signature, telemetry_hmac(value, signing_key)
+        ):
+            reasons.append("telemetry signature is invalid")
         if not isinstance(value.get("sequence"), int) or value["sequence"] < 0:
             reasons.append("telemetry sequence is missing")
         timestamp = value.get("timestamp_ns")
@@ -604,11 +672,17 @@ def evaluate_telemetry(
         errors.extend(str(item) for item in metrics["timestamp_errors"])
     if metrics.get("independent_sample_count", 0) != metrics.get("samples", 0):
         errors.append("telemetry independent measurement sample count does not match rows")
-    if (
-        not isinstance(metrics.get("external_gpu_samples"), list)
-        or not metrics["external_gpu_samples"]
+    executor_capture = metrics.get("executor_capture")
+    if not isinstance(executor_capture, dict) or executor_capture.get("trusted") is not True:
+        errors.append(
+            "authenticated qualification-executor GPU telemetry capture is required; "
+            "caller-provided samples are not accepted"
+        )
+    elif not all(
+        isinstance(executor_capture.get(key), str) and executor_capture[key].strip()
+        for key in ("host_binding", "runtime_binding", "samples_sha256")
     ):
-        errors.append("independent host GPU telemetry samples are required")
+        errors.append("executor GPU telemetry capture binding or digest is incomplete")
     model_revisions = metrics.get("model_revisions")
     if not isinstance(model_revisions, dict) or not REQUIRED_ROLES.issubset(model_revisions):
         errors.append("all required model-role revisions must be present in runtime telemetry")
@@ -696,13 +770,45 @@ def evaluate_telemetry(
 
 
 def run_runtime(
-    argv: list[str], timeout: float, sample_interval: float = 1.0
+    argv: list[str],
+    timeout: float,
+    sample_interval: float = 1.0,
+    *,
+    telemetry_signing_key_file: Path | None = None,
 ) -> tuple[CommandResult, dict[str, Any]]:
     started = time.monotonic()
+    challenge = secrets.token_hex(24)
+    binding_host = host_binding()
+    signing_key: bytes | None = None
+    if telemetry_signing_key_file is not None:
+        try:
+            signing_key = telemetry_signing_key_file.read_bytes()
+        except OSError:
+            signing_key = None
+    child_env = os.environ.copy()
+    child_env.update(
+        {
+            "SMOKE_GPU_TELEMETRY_CHALLENGE": challenge,
+            "SMOKE_GPU_TELEMETRY_HOST_BINDING": binding_host,
+        }
+    )
+    if telemetry_signing_key_file is not None:
+        child_env["SMOKE_GPU_TELEMETRY_SIGNING_KEY_FILE"] = str(telemetry_signing_key_file)
     try:
-        process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=child_env,
+        )
     except FileNotFoundError as exc:
         return CommandResult(tuple(argv), "unavailable", None, 0.0, "", str(exc)), {}
+    try:
+        start_ticks = process_start_ticks(process.pid)
+    except (OSError, IndexError):
+        start_ticks = ""
+    binding_runtime = runtime_binding(process.pid, start_ticks) if start_ticks else ""
     output: list[str] = []
     error: list[str] = []
     telemetry: list[dict[str, Any]] = []
@@ -765,10 +871,27 @@ def run_runtime(
         _tail("".join(output)),
         _tail("".join(error)),
     )
-    metrics = parse_telemetry(output)
+    metrics = parse_telemetry(
+        output,
+        expected_runtime_pid=process.pid,
+        expected_runtime_start_ticks=start_ticks,
+        expected_host_binding=binding_host,
+        expected_challenge=challenge,
+        signing_key=signing_key,
+    )
     if gpu_samples:
-        metrics["external_gpu_samples"] = gpu_samples
-        metrics["gpu_samples"] = gpu_samples
+        metrics["executor_capture"] = {
+            "trusted": bool(
+                signing_key
+                and binding_runtime
+                and metrics.get("provenance", {}).get("trusted") is True
+            ),
+            "source": "qualification-executor:nvidia-smi",
+            "host_binding": binding_host,
+            "runtime_binding": binding_runtime,
+            "samples_sha256": hash_json(gpu_samples),
+            "sample_count": len(gpu_samples),
+        }
         metrics["gpu_utilization"] = {
             "min": min(row["gpu_utilization"] for row in gpu_samples),
             "max": max(row["gpu_utilization"] for row in gpu_samples),
@@ -779,7 +902,91 @@ def run_runtime(
             "max": max(row["nvdec_utilization"] for row in gpu_samples),
             "avg": sum(row["nvdec_utilization"] for row in gpu_samples) / len(gpu_samples),
         }
+    else:
+        metrics["executor_capture"] = {
+            "trusted": False,
+            "source": "qualification-executor:nvidia-smi",
+            "host_binding": binding_host,
+            "runtime_binding": binding_runtime,
+            "samples_sha256": "",
+            "sample_count": 0,
+        }
     return result, metrics
+
+
+def run_attested_fault_runtime(
+    argv: list[str],
+    timeout: float,
+    *,
+    challenge: str,
+    signing_key_file: Path | None,
+) -> tuple[CommandResult, dict[str, Any] | None]:
+    """Run fault isolation only when the child returns signed bound evidence."""
+
+    key = None
+    if signing_key_file is not None:
+        try:
+            key = signing_key_file.read_bytes()
+        except OSError:
+            key = None
+    env = os.environ.copy()
+    env["SMOKE_GPU_TELEMETRY_CHALLENGE"] = challenge
+    env["SMOKE_GPU_TELEMETRY_HOST_BINDING"] = host_binding()
+    if signing_key_file is not None:
+        env["SMOKE_GPU_TELEMETRY_SIGNING_KEY_FILE"] = str(signing_key_file)
+    started = time.monotonic()
+    try:
+        process = subprocess.Popen(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env
+        )
+    except FileNotFoundError as exc:
+        return CommandResult(tuple(argv), "unavailable", None, 0.0, "", str(exc)), None
+    try:
+        start_ticks = process_start_ticks(process.pid)
+    except (OSError, IndexError):
+        start_ticks = ""
+    try:
+        stdout, stderr = process.communicate(timeout=max(0.1, timeout))
+        status = "passed" if process.returncode == 0 else "failed"
+    except subprocess.TimeoutExpired as exc:
+        process.kill()
+        stdout, stderr = process.communicate()
+        status = "timeout"
+        stdout = (exc.stdout or "") + stdout
+        stderr = (exc.stderr or "") + stderr
+    result = CommandResult(
+        tuple(argv),
+        status,
+        process.returncode,
+        time.monotonic() - started,
+        _tail(stdout),
+        _tail(stderr),
+    )
+    if status != "passed" or key is None:
+        return result, None
+    if not start_ticks:
+        return result, None
+    expected_binding = runtime_binding(process.pid, start_ticks)
+    for line in stdout.splitlines():
+        try:
+            value = json.loads(line)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(value, dict) or value.get("schema_version") != "gpu.fault-attestation.v1":
+            continue
+        if (
+            value.get("status") == "passed"
+            and value.get("producer") == "tp-smoke-detect.fault-harness"
+            and value.get("qualification_challenge") == challenge
+            and value.get("runtime_pid") == process.pid
+            and value.get("runtime_start_ticks") == start_ticks
+            and value.get("runtime_binding") == expected_binding
+            and value.get("host_binding") == env["SMOKE_GPU_TELEMETRY_HOST_BINDING"]
+            and isinstance(value.get("signature_hmac_sha256"), str)
+            and hmac.compare_digest(value["signature_hmac_sha256"], telemetry_hmac(value, key))
+        ):
+            return result, value
+    return result, None
 
 
 def build_receipt(args: argparse.Namespace) -> tuple[dict[str, Any], list[CommandResult]]:
@@ -816,7 +1023,12 @@ def build_receipt(args: argparse.Namespace) -> tuple[dict[str, Any], list[Comman
                 model_manifest=str(args.model_manifest),
             )
             runtime_argv = shlex.split(command_text)
-            result, metrics = run_runtime(runtime_argv, args.runtime_timeout, args.sample_interval)
+            result, metrics = run_runtime(
+                runtime_argv,
+                args.runtime_timeout,
+                args.sample_interval,
+                telemetry_signing_key_file=args.telemetry_signing_key_file,
+            )
             all_commands.append(result)
             runtime = {"status": result.status, "command": result.as_dict(), "metrics": metrics}
             if result.status != "passed":
@@ -846,12 +1058,19 @@ def build_receipt(args: argparse.Namespace) -> tuple[dict[str, Any], list[Comman
                 model_manifest=str(args.model_manifest),
                 fault_injection=args.fault_injection,
             )
-            fault_result = run_command(shlex.split(fault_command), args.runtime_timeout)
+            fault_result, fault_attestation = run_attested_fault_runtime(
+                shlex.split(fault_command),
+                args.runtime_timeout,
+                challenge=secrets.token_hex(24),
+                signing_key_file=args.telemetry_signing_key_file,
+            )
             all_commands.append(fault_result)
-            fault["status"] = "passed" if fault_result.status == "passed" else "failed"
+            fault["status"] = "passed" if fault_attestation is not None else "failed"
             fault["result"] = fault_result.as_dict()
-            if fault_result.status != "passed":
-                errors.append(f"fault-isolation command did not pass: {fault_result.status}")
+            if fault_attestation is not None:
+                fault["result"]["attestation"] = fault_attestation.get("signature_hmac_sha256")
+            else:
+                errors.append("fault-isolation command did not return authenticated bound evidence")
         elif args.real_runtime and not errors:
             fault["result"] = "requires an independently attested fault-runtime command"
             errors.append("fault injection requires --fault-runtime-command; no fault is inferred")
@@ -1034,6 +1253,11 @@ def main() -> int:
     )
     parser.add_argument("--receipt-signing-key-file", type=Path)
     parser.add_argument("--receipt-signing-key-id", default="gpu-qualification")
+    parser.add_argument(
+        "--telemetry-signing-key-file",
+        type=Path,
+        help="read-only runtime signer key; separate from the readiness receipt key",
+    )
     parser.add_argument("--one-stream-output", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--markdown-output", type=Path)

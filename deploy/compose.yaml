@@ -226,8 +226,17 @@ services:
       TRANSFORMERS_OFFLINE: "1"
       SMOKE_MODEL_MANIFEST: /models/manifest/model-release.json
       SMOKE_GPU_READINESS_RECEIPT: /run/smoke-detect/gpu-readiness.json
+      # The readiness receipt is bound to this exact digest.  Operators may
+      # override it only together with the matching pinned image and receipt.
+      SMOKE_GPU_IMAGE_DIGEST: ${SMOKE_GPU_IMAGE_DIGEST:-c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759}
+      SMOKE_GPU_RECEIPT_SIGNING_KEY: /run/secrets/gpu_receipt_signing_key
+      SMOKE_GPU_RECEIPT_SIGNING_KEY_ID: ${SMOKE_GPU_RECEIPT_SIGNING_KEY_ID:-gpu-qualification}
       SMOKE_GPU_MEDIA_CONFIG: /etc/smoke-detect/deepstream/config.txt
       SMOKE_GPU_MEDIA_EXECUTABLE: ${SMOKE_GPU_MEDIA_EXECUTABLE:-/opt/smoke-detect/bin/media-publisher}
+    secrets:
+      - source: gpu_receipt_signing_key
+        target: gpu_receipt_signing_key
+        mode: 0400
     volumes:
       - ./../model-repository:/models:ro
       - ./../docs/dev_artifacts/qualification:/run/smoke-detect:ro
@@ -359,3 +368,5 @@ networks:
 secrets:
   postgres_password:
     file: ./secrets/postgres_password.txt
+  gpu_receipt_signing_key:
+    file: ${SMOKE_GPU_RECEIPT_SIGNING_KEY_FILE:-./secrets/gpu_receipt_signing_key.txt}
