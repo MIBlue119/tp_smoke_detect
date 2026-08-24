@@ -1,0 +1,15 @@
+# gst-nvinferserver configuration shape for the baseline SigLIP 2 crop head.
+# The model repository is mounted read-only by the GPU deployment profile.
+infer_config {
+  unique_id: 3
+  max_batch_size: 20
+  backend {
+    inputs: [ { name: "INPUT__0" data_type: TYPE_FP16 dims: [ 3, 224, 224 ] } ]
+    outputs: [ { name: "OUTPUT__0" data_type: TYPE_FP32 dims: [ 8 ] } ]
+  }
+  model {
+    name: "siglip2-crop-head"
+    version: -1
+    model_repo { model_repo: "model-repository" }
+  }
+}

@@ -25,9 +25,18 @@ if(TP_SMOKE_DETECT_ENABLE_DEEPSTREAM)
   endif()
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(GSTREAMER REQUIRED IMPORTED_TARGET gstreamer-1.0)
+  pkg_check_modules(GSTREAMER_VIDEO REQUIRED IMPORTED_TARGET gstreamer-video-1.0)
+  find_path(DEEPSTREAM_INCLUDE_DIR gstnvdsmeta.h
+    PATHS "${DEEPSTREAM_SDK_ROOT}/sources/includes" NO_DEFAULT_PATH REQUIRED)
+  find_path(DEEPSTREAM_INFER_INCLUDE_DIR nvdsinfer.h
+    PATHS "${DEEPSTREAM_SDK_ROOT}/sources/includes" NO_DEFAULT_PATH REQUIRED)
+  find_library(DEEPSTREAM_META_LIBRARY nvdsgst_meta
+    PATHS "${DEEPSTREAM_SDK_ROOT}/lib" NO_DEFAULT_PATH REQUIRED)
   target_compile_definitions(media_worker PUBLIC TP_SMOKE_DETECT_ENABLE_DEEPSTREAM=1)
-  target_include_directories(media_worker PRIVATE "${DEEPSTREAM_SDK_ROOT}/sources/includes")
-  target_link_libraries(media_worker PRIVATE PkgConfig::GSTREAMER)
+  target_include_directories(media_worker PRIVATE
+    "${DEEPSTREAM_INCLUDE_DIR}" "${DEEPSTREAM_INFER_INCLUDE_DIR}")
+  target_link_libraries(media_worker PRIVATE
+    PkgConfig::GSTREAMER PkgConfig::GSTREAMER_VIDEO "${DEEPSTREAM_META_LIBRARY}")
 else()
   target_compile_definitions(media_worker PUBLIC TP_SMOKE_DETECT_ENABLE_DEEPSTREAM=0)
 endif()

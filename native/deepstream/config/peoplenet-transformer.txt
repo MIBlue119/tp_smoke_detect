@@ -1,0 +1,23 @@
+# DeepStream nvinfer configuration shape.
+# Supply model-engine-file and model-file from the immutable model bundle.
+[property]
+gpu-id=0
+net-scale-factor=0.003921568627
+model-color-format=0
+infer-dims=3;544;960
+batch-size=20
+network-type=0
+num-detected-classes=1
+gie-unique-id=1
+process-mode=1
+network-mode=2
+cluster-mode=2
+model-engine-file=model-repository/peoplenet-transformer/1/model.plan
+labelfile-path=model-repository/peoplenet-transformer/1/labels.txt
+parse-bbox-func-name=NvDsInferParseCustom
+custom-lib-path=libnvdsinfer_custom_impl_fasterRCNN.so
+
+[class-attrs-all]
+pre-cluster-threshold=0.35
+nms-iou-threshold=0.45
+topk=100
