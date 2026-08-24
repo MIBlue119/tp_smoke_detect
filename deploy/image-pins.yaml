@@ -32,9 +32,45 @@ images:
     digest: "REQUIRED-BEFORE-RELEASE"
     purpose: cpu-media-boundary-reference
     runtime_network: disabled
+  deepstream_triton_rtx3090:
+    # Immutable manifest-list digest; qualification resolves linux/amd64.
+    reference: nvcr.io/nvidia/deepstream:7.0-triton-multiarch
+    digest: sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759
+    pinned_reference: nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759
+    platform: linux/amd64
+    purpose: rtx3090-deepstream-media-and-baseline-triton
+    runtime_network: disabled
+    stack:
+      deepstream: '7.0'
+      triton: '23.10'
+      cuda: '12.2'
+      tensorrt: '8.6.1.6'
+    host_profile:
+      os: ubuntu-22.04
+      architecture: x86_64
+      gpu: NVIDIA GeForce RTX 3090
+      compute_capability: '8.6'
+      driver_branch: '580'
+    sbom: REQUIRED-BEFORE-RELEASE
+    import_status: not-imported
+    qualification_status: unqualified
+
+gpu_profiles:
+  rtx3090:
+    image: deepstream_triton_rtx3090
+    host_os: ubuntu-22.04
+    architecture: x86_64
+    gpu_model: NVIDIA GeForce RTX 3090
+    compute_capability: '8.6'
+    driver_branch: '580'
+    host_cuda: '12.8'
+    container_cuda: '12.2'
+    qualification_command: scripts/qualify_gpu_host.sh --profile rtx3090
 
 release_gate:
   - resolve every REQUIRED-BEFORE-RELEASE digest before deployment
   - attach SBOM and vulnerability disposition for every resolved image
   - import images into the site registry before starting compose
   - keep runtime egress disabled; model/media files are mounted local artifacts
+  - GPU readiness remains false until the host/import receipt is complete and the
+    one-stream and capacity gates have passed
