@@ -17,8 +17,6 @@ import hmac
 import json
 import os
 import re
-import secrets
-import shlex
 import signal
 import subprocess
 import sys
@@ -33,7 +31,12 @@ from typing import Any
 
 import yaml
 from ml.registry.model_repository import ModelRepositoryManifest, verify_local_artifact
-from scripts.gpu_receipts import build_one_stream_receipt, telemetry_hmac
+from scripts.gpu_receipts import (
+    build_one_stream_receipt,
+    canonical_receipt_bytes,
+    sign_executor_artifact,
+    telemetry_hmac,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_IMAGE = (
@@ -169,6 +172,106 @@ def load_document(path: Path) -> tuple[Any | None, list[str]]:
             return yaml.safe_load(stream), []
     except (OSError, yaml.YAMLError) as exc:
         return None, [f"cannot read {path}: {exc}"]
+
+
+_MANIFEST_PLACEHOLDERS = {"{image}", "{replay_manifest}", "{model_manifest}", "{fault_injection}"}
+_SHELL_TOKENS = {"sh", "bash", "zsh", "dash", "-c", "--command"}
+
+
+def load_approved_runtime_manifest(
+    path: Path, *, profile: str
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Load the only command identity that may be used by a qualification.
+
+    The manifest is an allow-list, not a command template supplied by the
+    caller.  It must name a digest-pinned image, a stable runtime identity, and
+    argv arrays without a shell interpreter.  A developer command can still be
+    used for local diagnostics, but it is never accepted by this loader as a
+    qualifying manifest.
+    """
+
+    raw, errors = load_document(path)
+    if errors:
+        return None, errors
+    if not isinstance(raw, dict):
+        return None, ["approved runtime manifest must be a JSON/YAML object"]
+    errors = []
+    if raw.get("schema_version") != "gpu.qualification-executor-manifest.v1":
+        errors.append("approved runtime manifest schema_version is invalid")
+    if raw.get("profile") != profile:
+        errors.append(f"approved runtime manifest profile must be {profile}")
+    if raw.get("qualifying") is not True:
+        errors.append("approved runtime manifest must be marked qualifying")
+    image = raw.get("image")
+    if (
+        not isinstance(image, str)
+        or "@sha256:" not in image
+        or not SHA256.fullmatch(image.rsplit("@sha256:", 1)[1])
+    ):
+        errors.append("approved runtime manifest image must be digest-pinned")
+    runtime = raw.get("runtime")
+    if (
+        not isinstance(runtime, dict)
+        or not isinstance(runtime.get("identity"), str)
+        or not runtime["identity"].strip()
+    ):
+        errors.append("approved runtime manifest runtime identity is missing")
+
+    def validate_argv(value: Any, label: str, *, allow_fault: bool = False) -> None:
+        if (
+            not isinstance(value, list)
+            or not value
+            or not all(isinstance(item, str) for item in value)
+        ):
+            errors.append(f"approved runtime manifest {label} command must be an argv list")
+            return
+        for item in value:
+            if item in _SHELL_TOKENS or any(
+                token in item for token in (";", "&&", "||", "|", "$(", "`")
+            ):
+                errors.append(f"approved runtime manifest {label} command may not invoke a shell")
+            if item.startswith("{") and item not in _MANIFEST_PLACEHOLDERS:
+                errors.append(
+                    f"approved runtime manifest {label} command contains an unknown placeholder"
+                )
+            if item == "{fault_injection}" and not allow_fault:
+                errors.append(
+                    f"approved runtime manifest {label} command contains a fault placeholder"
+                )
+        if isinstance(image, str) and "{image}" not in value and image not in value:
+            errors.append(
+                f"approved runtime manifest {label} command is not bound to its pinned image"
+            )
+
+    if isinstance(runtime, dict):
+        validate_argv(runtime.get("command"), "runtime")
+    faults = raw.get("faults", {})
+    if not isinstance(faults, dict):
+        errors.append("approved runtime manifest faults must be an object")
+    else:
+        for name, command in faults.items():
+            validate_argv(command, f"fault {name}", allow_fault=True)
+    return (raw, list(dict.fromkeys(errors))) if not errors else (None, list(dict.fromkeys(errors)))
+
+
+def render_approved_command(
+    manifest: dict[str, Any],
+    *,
+    replay_manifest: Path,
+    model_manifest: Path,
+    fault_injection: str | None = None,
+) -> list[str]:
+    runtime_spec = (
+        manifest["runtime"] if fault_injection is None else manifest["faults"][fault_injection]
+    )
+    argv = runtime_spec.get("command", []) if isinstance(runtime_spec, dict) else runtime_spec
+    replacements = {
+        "{image}": str(manifest["image"]),
+        "{replay_manifest}": str(replay_manifest),
+        "{model_manifest}": str(model_manifest),
+        "{fault_injection}": fault_injection or "",
+    }
+    return [replacements.get(str(item), str(item)) for item in argv]
 
 
 def host_probe(timeout: float) -> tuple[dict[str, Any], list[CommandResult]]:
@@ -401,6 +504,7 @@ def parse_telemetry(
     expected_host_binding: str | None = None,
     expected_challenge: str | None = None,
     signing_key: bytes | None = None,
+    expected_runtime_identity: str | None = None,
 ) -> dict[str, Any]:
     """Parse only runtime-owned telemetry while retaining rejected rows.
 
@@ -458,20 +562,19 @@ def parse_telemetry(
         ):
             reasons.append("telemetry host binding does not match the qualification host")
         if (
-            not isinstance(value.get("qualification_challenge"), str)
-            or not value["qualification_challenge"].strip()
-        ):
-            reasons.append("telemetry qualification challenge is missing")
-        elif (
             expected_challenge is not None
             and value.get("qualification_challenge") != expected_challenge
         ):
             reasons.append("telemetry qualification challenge does not match this run")
+        if (
+            expected_runtime_identity is not None
+            and value.get("runtime_identity") != expected_runtime_identity
+        ):
+            reasons.append("telemetry runtime identity does not match approved manifest")
         signature = value.get("signature_hmac_sha256")
-        if signing_key is None:
-            reasons.append("telemetry signing key is unavailable")
-        elif not isinstance(signature, str) or not hmac.compare_digest(
-            signature, telemetry_hmac(value, signing_key)
+        if signing_key is not None and (
+            not isinstance(signature, str)
+            or not hmac.compare_digest(signature, telemetry_hmac(value, signing_key))
         ):
             reasons.append("telemetry signature is invalid")
         if not isinstance(value.get("sequence"), int) or value["sequence"] < 0:
@@ -774,26 +877,21 @@ def run_runtime(
     timeout: float,
     sample_interval: float = 1.0,
     *,
-    telemetry_signing_key_file: Path | None = None,
+    executor_signing_key: bytes | None = None,
+    executor_signing_key_id: str = "gpu-executor",
+    expected_runtime_identity: str | None = None,
+    expected_container_digest: str | None = None,
 ) -> tuple[CommandResult, dict[str, Any]]:
     started = time.monotonic()
-    challenge = secrets.token_hex(24)
     binding_host = host_binding()
-    signing_key: bytes | None = None
-    if telemetry_signing_key_file is not None:
-        try:
-            signing_key = telemetry_signing_key_file.read_bytes()
-        except OSError:
-            signing_key = None
     child_env = os.environ.copy()
-    child_env.update(
-        {
-            "SMOKE_GPU_TELEMETRY_CHALLENGE": challenge,
-            "SMOKE_GPU_TELEMETRY_HOST_BINDING": binding_host,
-        }
-    )
-    if telemetry_signing_key_file is not None:
-        child_env["SMOKE_GPU_TELEMETRY_SIGNING_KEY_FILE"] = str(telemetry_signing_key_file)
+    for secret_name in (
+        "SMOKE_GPU_TELEMETRY_SIGNING_KEY_FILE",
+        "SMOKE_GPU_TELEMETRY_SIGNING_KEY",
+        "SMOKE_GPU_TELEMETRY_CHALLENGE",
+        "SMOKE_GPU_EXECUTOR_SIGNING_KEY_FILE",
+    ):
+        child_env.pop(secret_name, None)
     try:
         process = subprocess.Popen(
             argv,
@@ -876,21 +974,54 @@ def run_runtime(
         expected_runtime_pid=process.pid,
         expected_runtime_start_ticks=start_ticks,
         expected_host_binding=binding_host,
-        expected_challenge=challenge,
-        signing_key=signing_key,
+        expected_runtime_identity=expected_runtime_identity,
+    )
+    telemetry_timestamps = [
+        int(row["timestamp_ns"])
+        for row in telemetry
+        if isinstance(row, dict) and isinstance(row.get("timestamp_ns"), int)
+    ]
+    service_metrics_sha256 = hash_json(telemetry)
+    process_exe = ""
+    with suppress(OSError):
+        process_exe = os.readlink(f"/proc/{process.pid}/exe")
+    command_identity = hash_json(list(argv))
+    evidence: dict[str, Any] = {
+        "schema_version": "gpu.executor-evidence.v1",
+        "trusted": False,
+        "host_binding": binding_host,
+        "runtime_binding": binding_runtime,
+        "runtime_identity": expected_runtime_identity or "",
+        "container_digest": expected_container_digest or "",
+        "process": {"pid": process.pid, "start_ticks": start_ticks, "exe": process_exe},
+        "container": {"command_sha256": command_identity},
+        "host_samples": gpu_samples,
+        "samples_sha256": hash_json(gpu_samples),
+        "service_metrics_sha256": service_metrics_sha256,
+        "telemetry_timestamps": telemetry_timestamps,
+        "fault_invariants": False,
+    }
+    # Independent host samples must exist and overlap the runtime-owned rows;
+    # otherwise a child can print a convincing fabricated metrics object.
+    evidence["trusted"] = bool(
+        executor_signing_key
+        and binding_runtime
+        and expected_runtime_identity
+        and gpu_samples
+        and telemetry_timestamps
+        and all(started * 1_000_000_000 <= stamp for stamp in telemetry_timestamps)
+        and metrics.get("provenance", {}).get("trusted") is True
     )
     if gpu_samples:
         metrics["executor_capture"] = {
-            "trusted": bool(
-                signing_key
-                and binding_runtime
-                and metrics.get("provenance", {}).get("trusted") is True
-            ),
+            "trusted": evidence["trusted"],
             "source": "qualification-executor:nvidia-smi",
             "host_binding": binding_host,
             "runtime_binding": binding_runtime,
             "samples_sha256": hash_json(gpu_samples),
             "sample_count": len(gpu_samples),
+            "signature_key_id": executor_signing_key_id,
+            "evidence_sha256": hash_json(evidence),
         }
         metrics["gpu_utilization"] = {
             "min": min(row["gpu_utilization"] for row in gpu_samples),
@@ -910,7 +1041,15 @@ def run_runtime(
             "runtime_binding": binding_runtime,
             "samples_sha256": "",
             "sample_count": 0,
+            "signature_key_id": executor_signing_key_id,
+            "evidence_sha256": hash_json(evidence),
         }
+    if executor_signing_key is not None and evidence["trusted"]:
+        unsigned = dict(evidence)
+        metrics["executor_capture"]["signature_hmac_sha256"] = hmac.new(
+            executor_signing_key, canonical_receipt_bytes(unsigned), hashlib.sha256
+        ).hexdigest()
+    metrics["executor_evidence"] = evidence
     return result, metrics
 
 
@@ -918,22 +1057,18 @@ def run_attested_fault_runtime(
     argv: list[str],
     timeout: float,
     *,
-    challenge: str,
-    signing_key_file: Path | None,
+    expected_runtime_identity: str | None = None,
 ) -> tuple[CommandResult, dict[str, Any] | None]:
-    """Run fault isolation only when the child returns signed bound evidence."""
-
-    key = None
-    if signing_key_file is not None:
-        try:
-            key = signing_key_file.read_bytes()
-        except OSError:
-            key = None
+    """Run an approved fault command; the executor signs its result later."""
     env = os.environ.copy()
-    env["SMOKE_GPU_TELEMETRY_CHALLENGE"] = challenge
+    for secret_name in (
+        "SMOKE_GPU_TELEMETRY_SIGNING_KEY_FILE",
+        "SMOKE_GPU_TELEMETRY_SIGNING_KEY",
+        "SMOKE_GPU_TELEMETRY_CHALLENGE",
+        "SMOKE_GPU_EXECUTOR_SIGNING_KEY_FILE",
+    ):
+        env.pop(secret_name, None)
     env["SMOKE_GPU_TELEMETRY_HOST_BINDING"] = host_binding()
-    if signing_key_file is not None:
-        env["SMOKE_GPU_TELEMETRY_SIGNING_KEY_FILE"] = str(signing_key_file)
     started = time.monotonic()
     try:
         process = subprocess.Popen(
@@ -962,7 +1097,7 @@ def run_attested_fault_runtime(
         _tail(stdout),
         _tail(stderr),
     )
-    if status != "passed" or key is None:
+    if status != "passed":
         return result, None
     if not start_ticks:
         return result, None
@@ -977,13 +1112,14 @@ def run_attested_fault_runtime(
         if (
             value.get("status") == "passed"
             and value.get("producer") == "tp-smoke-detect.fault-harness"
-            and value.get("qualification_challenge") == challenge
             and value.get("runtime_pid") == process.pid
             and value.get("runtime_start_ticks") == start_ticks
             and value.get("runtime_binding") == expected_binding
             and value.get("host_binding") == env["SMOKE_GPU_TELEMETRY_HOST_BINDING"]
-            and isinstance(value.get("signature_hmac_sha256"), str)
-            and hmac.compare_digest(value["signature_hmac_sha256"], telemetry_hmac(value, key))
+            and (
+                expected_runtime_identity is None
+                or value.get("runtime_identity") == expected_runtime_identity
+            )
         ):
             return result, value
     return result, None
@@ -1008,41 +1144,57 @@ def build_receipt(args: argparse.Namespace) -> tuple[dict[str, Any], list[Comman
     )
     prerequisites = [host, image, models, replay]
     errors = [error for item in prerequisites for error in item.get("errors", [])]
+    approved_manifest: dict[str, Any] | None = None
+    if args.real_runtime:
+        approved_manifest, manifest_errors = load_approved_runtime_manifest(
+            args.runtime_manifest, profile=args.profile
+        )
+        errors.extend(manifest_errors)
+        if args.runtime_command:
+            errors.append("--runtime-command is development-only and cannot qualify")
     runtime: dict[str, Any] = {"status": "not-run", "reason": "prerequisites blocked"}
     fault: dict[str, Any] = {"status": "not-run", "reason": "runtime not run"}
+    executor_signing_key: bytes | None = None
+    if args.real_runtime and args.executor_signing_key_file is not None:
+        try:
+            executor_signing_key = args.executor_signing_key_file.read_bytes()
+        except OSError as exc:
+            errors.append(f"executor signing key cannot be read: {exc}")
+    elif args.real_runtime:
+        errors.append("qualifying mode requires an executor signing key")
     if args.real_runtime and not errors:
-        if not args.runtime_command:
-            errors.append(
-                "--real-runtime requires --runtime-command; "
-                "no unreviewed default pipeline is assumed"
+        assert approved_manifest is not None
+        runtime_argv = render_approved_command(
+            approved_manifest,
+            replay_manifest=args.replay_manifest,
+            model_manifest=args.model_manifest,
+        )
+        manifest_image = str(approved_manifest["image"])
+        if args.image != manifest_image:
+            errors.append("requested image does not match approved runtime manifest digest")
+        result, metrics = run_runtime(
+            runtime_argv,
+            args.runtime_timeout,
+            args.sample_interval,
+            executor_signing_key=executor_signing_key,
+            executor_signing_key_id=args.executor_signing_key_id,
+            expected_runtime_identity=approved_manifest["runtime"]["identity"],
+            expected_container_digest=manifest_image.rsplit("@", 1)[-1],
+        )
+        all_commands.append(result)
+        runtime = {"status": result.status, "command": result.as_dict(), "metrics": metrics}
+        if result.status != "passed":
+            errors.append(f"real runtime did not complete: {result.status}")
+        errors.extend(
+            evaluate_telemetry(
+                metrics,
+                streams=args.streams,
+                duration_seconds=result.duration_seconds,
+                analysis_fps=args.analysis_fps,
+                required_duration_seconds=args.duration_hours * 3600,
+                sample_interval=args.sample_interval,
             )
-        else:
-            command_text = args.runtime_command.format(
-                image=args.image,
-                replay_manifest=str(args.replay_manifest),
-                model_manifest=str(args.model_manifest),
-            )
-            runtime_argv = shlex.split(command_text)
-            result, metrics = run_runtime(
-                runtime_argv,
-                args.runtime_timeout,
-                args.sample_interval,
-                telemetry_signing_key_file=args.telemetry_signing_key_file,
-            )
-            all_commands.append(result)
-            runtime = {"status": result.status, "command": result.as_dict(), "metrics": metrics}
-            if result.status != "passed":
-                errors.append(f"real runtime did not complete: {result.status}")
-            errors.extend(
-                evaluate_telemetry(
-                    metrics,
-                    streams=args.streams,
-                    duration_seconds=result.duration_seconds,
-                    analysis_fps=args.analysis_fps,
-                    required_duration_seconds=args.duration_hours * 3600,
-                    sample_interval=args.sample_interval,
-                )
-            )
+        )
     elif args.real_runtime:
         runtime = {"status": "not-run", "reason": "prerequisites blocked"}
     if args.fault_injection:
@@ -1052,28 +1204,36 @@ def build_receipt(args: argparse.Namespace) -> tuple[dict[str, Any], list[Comman
             "result": "not-run: real runtime prerequisites are not satisfied",
         }
         if args.real_runtime and not errors and args.fault_runtime_command:
-            fault_command = args.fault_runtime_command.format(
-                image=args.image,
-                replay_manifest=str(args.replay_manifest),
-                model_manifest=str(args.model_manifest),
-                fault_injection=args.fault_injection,
-            )
-            fault_result, fault_attestation = run_attested_fault_runtime(
-                shlex.split(fault_command),
-                args.runtime_timeout,
-                challenge=secrets.token_hex(24),
-                signing_key_file=args.telemetry_signing_key_file,
-            )
-            all_commands.append(fault_result)
-            fault["status"] = "passed" if fault_attestation is not None else "failed"
-            fault["result"] = fault_result.as_dict()
-            if fault_attestation is not None:
-                fault["result"]["attestation"] = fault_attestation.get("signature_hmac_sha256")
+            errors.append("--fault-runtime-command is development-only and cannot qualify")
+        if args.real_runtime and not errors and approved_manifest is not None:
+            fault_commands = approved_manifest.get("faults", {})
+            if args.fault_injection not in fault_commands:
+                fault["result"] = "approved manifest has no command for this fault"
+                errors.append("fault injection is not present in the approved runtime manifest")
             else:
-                errors.append("fault-isolation command did not return authenticated bound evidence")
+                fault_command = render_approved_command(
+                    approved_manifest,
+                    replay_manifest=args.replay_manifest,
+                    model_manifest=args.model_manifest,
+                    fault_injection=args.fault_injection,
+                )
+                fault_result, fault_attestation = run_attested_fault_runtime(
+                    fault_command,
+                    args.runtime_timeout,
+                    expected_runtime_identity=approved_manifest["runtime"]["identity"],
+                )
+                all_commands.append(fault_result)
+                fault["status"] = "passed" if fault_attestation is not None else "failed"
+                fault["result"] = fault_result.as_dict()
+                if fault_attestation is not None:
+                    fault["result"]["attestation"] = hash_json(fault_attestation)
+                else:
+                    errors.append("approved fault command did not return bound evidence")
         elif args.real_runtime and not errors:
-            fault["result"] = "requires an independently attested fault-runtime command"
-            errors.append("fault injection requires --fault-runtime-command; no fault is inferred")
+            fault["result"] = "requires an approved fault command in the runtime manifest"
+            errors.append(
+                "fault injection requires an approved manifest command; no fault is inferred"
+            )
     status = "qualified" if not errors and runtime.get("status") == "passed" else "blocked"
     label = "gpu-lab-qualified" if status == "qualified" and args.streams == 20 else "unqualified"
     receipt: dict[str, Any] = {
@@ -1131,6 +1291,12 @@ def build_receipt(args: argparse.Namespace) -> tuple[dict[str, Any], list[Comman
             ),
         ],
     }
+    if approved_manifest is not None:
+        receipt["approved_runtime"] = {
+            "manifest_sha256": sha256_file(args.runtime_manifest),
+            "image": approved_manifest.get("image"),
+            "identity": approved_manifest.get("runtime", {}).get("identity"),
+        }
     runtime_identity = runtime.get("metrics", {}).get("runtime_identity")
     host_raw = str(host.get("gpu", {}).get("raw", ""))
     host_fields = [item.strip() for item in host_raw.split(",")]
@@ -1148,15 +1314,37 @@ def build_receipt(args: argparse.Namespace) -> tuple[dict[str, Any], list[Comman
             "tensorrt": runtime_identity,
             "triton": runtime_identity,
         }
-    signing_key = None
+    if status == "qualified" and executor_signing_key is not None:
+        runtime_evidence = runtime.get("metrics", {}).get("executor_evidence", {})
+        runtime_evidence = json.loads(json.dumps(runtime_evidence, sort_keys=True))
+        runtime_evidence["fault_invariants"] = (
+            fault.get("status") == "passed"
+            and isinstance(fault.get("result"), dict)
+            and fault["result"].get("status") == "passed"
+        )
+        runtime_evidence["fault_attestation_sha256"] = hash_json(fault.get("result", {}))
+        runtime_evidence["trusted"] = bool(
+            runtime_evidence.get("trusted") and runtime_evidence["fault_invariants"]
+        )
+        receipt["executor_attestation"] = sign_executor_artifact(
+            receipt,
+            runtime_evidence,
+            signing_key=executor_signing_key,
+            signing_key_id=args.executor_signing_key_id,
+        )
+    readiness_key = None
     if args.receipt_signing_key_file:
         try:
-            signing_key = args.receipt_signing_key_file.read_bytes()
+            readiness_key = args.receipt_signing_key_file.read_bytes()
         except OSError as exc:
             receipt["errors"].append(f"receipt signing key cannot be read: {exc}")
     if status == "qualified" and args.streams == 1:
         receipt["one_stream"] = build_one_stream_receipt(
-            receipt, signing_key=signing_key, signing_key_id=args.receipt_signing_key_id
+            receipt,
+            signing_key=readiness_key,
+            signing_key_id=args.receipt_signing_key_id,
+            executor_signing_key=executor_signing_key,
+            executor_signing_key_id=args.executor_signing_key_id,
         )
     return receipt, all_commands
 
@@ -1216,6 +1404,12 @@ def main() -> int:
     parser.add_argument("--image", default=DEFAULT_IMAGE)
     parser.add_argument("--replay-manifest", type=Path, default=DEFAULT_REPLAY)
     parser.add_argument("--model-manifest", type=Path, default=DEFAULT_MODEL_MANIFEST)
+    parser.add_argument(
+        "--runtime-manifest",
+        type=Path,
+        default=ROOT / "configs/gpu-qualification-manifest.yaml",
+        help="approved digest-pinned runtime manifest; required for qualifying mode",
+    )
     parser.add_argument("--artifact-root", type=Path)
     parser.add_argument(
         "--media-root",
@@ -1232,7 +1426,7 @@ def main() -> int:
     parser.add_argument("--real-runtime", action="store_true")
     parser.add_argument(
         "--runtime-command",
-        help="reviewed command; placeholders: {image}, {replay_manifest}, {model_manifest}",
+        help="development-only command; it is rejected by qualifying mode",
     )
     parser.add_argument(
         "--fault-injection",
@@ -1249,15 +1443,16 @@ def main() -> int:
     )
     parser.add_argument(
         "--fault-runtime-command",
-        help="independently attested fault command; placeholders include {fault_injection}",
+        help="development-only fault command; it is rejected by qualifying mode",
     )
     parser.add_argument("--receipt-signing-key-file", type=Path)
     parser.add_argument("--receipt-signing-key-id", default="gpu-qualification")
     parser.add_argument(
-        "--telemetry-signing-key-file",
+        "--executor-signing-key-file",
         type=Path,
-        help="read-only runtime signer key; separate from the readiness receipt key",
+        help="qualification-executor signing key; never exposed to runtime or fault children",
     )
+    parser.add_argument("--executor-signing-key-id", default="gpu-executor")
     parser.add_argument("--one-stream-output", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--markdown-output", type=Path)

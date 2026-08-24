@@ -1,0 +1,37 @@
+schema_version: gpu.qualification-executor-manifest.v1
+profile: rtx3090
+qualifying: true
+# This digest is intentionally the same immutable image identity used by the
+# GPU profile.  Change it only through a requalification and review.
+image: nvcr.io/nvidia/deepstream:7.0-triton-multiarch@sha256:c11befa808af8270e8ea0d0d7cc7cabbda08a2f496ee30b95f7acba5dce81759
+runtime:
+  identity: tp-smoke-detect.gpu-runtime.v1
+  command:
+    - docker
+    - run
+    - --rm
+    - --pull=never
+    - --gpus
+    - all
+    - --network
+    - none
+    - "{image}"
+    - /opt/smoke-detect/bin/gpu-runtime
+    - --replay-manifest
+    - "{replay_manifest}"
+    - --model-manifest
+    - "{model_manifest}"
+faults:
+  stalled-source:
+    - docker
+    - run
+    - --rm
+    - --pull=never
+    - --gpus
+    - all
+    - --network
+    - none
+    - "{image}"
+    - /opt/smoke-detect/bin/gpu-fault-harness
+    - --fault
+    - "{fault_injection}"

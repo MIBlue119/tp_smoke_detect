@@ -28,6 +28,7 @@ QUALIFICATION_REQUIRED_KEYS = {
     "errors",
     "recovery_steps",
 }
+EXECUTOR_ATTESTATION_SCHEMA = "gpu.executor-attestation.v1"
 
 
 def _is_non_empty_string(value: Any) -> bool:
@@ -145,6 +146,20 @@ def validate_qualification_source(source: Any) -> list[str]:
     recovery = source.get("recovery_steps")
     if not isinstance(recovery, list) or not recovery:
         errors.append("qualification source recovery evidence is missing")
+    attestation = source.get("executor_attestation")
+    if not isinstance(attestation, dict):
+        errors.append("qualification source executor attestation is missing")
+    else:
+        if attestation.get("schema_version") != EXECUTOR_ATTESTATION_SCHEMA:
+            errors.append("qualification source executor attestation schema is invalid")
+        if not _is_non_empty_string(attestation.get("signing_key_id")):
+            errors.append("qualification source executor attestation key identity is missing")
+        if not _is_sha256(attestation.get("source_sha256")):
+            errors.append("qualification source executor attestation source hash is missing")
+        if not isinstance(attestation.get("evidence"), dict):
+            errors.append("qualification source executor attestation evidence is missing")
+        if not _is_non_empty_string(attestation.get("signature_hmac_sha256")):
+            errors.append("qualification source executor attestation signature is missing")
     return list(dict.fromkeys(errors))
 
 
@@ -172,11 +187,105 @@ def telemetry_hmac(value: Any, signing_key: bytes) -> str:
     return hmac.new(signing_key, canonical_telemetry_bytes(value), hashlib.sha256).hexdigest()
 
 
+def _without_executor_attestation(source: Any) -> dict[str, Any] | None:
+    if not isinstance(source, dict):
+        return None
+    unsigned = json.loads(json.dumps(source, sort_keys=True))
+    unsigned.pop("executor_attestation", None)
+    return unsigned
+
+
+def sign_executor_artifact(
+    source: dict[str, Any],
+    evidence: dict[str, Any],
+    *,
+    signing_key: bytes,
+    signing_key_id: str = "gpu-executor",
+) -> dict[str, Any]:
+    """Attach executor-owned evidence signed after independent cross-checks.
+
+    The signed payload binds the complete qualification source (without this
+    detached field) and the raw evidence.  The readiness builder verifies this
+    with a separate verifier key before it can issue a readiness receipt.
+    """
+
+    unsigned = _without_executor_attestation(source)
+    if unsigned is None:
+        raise ValueError("qualification source must be an object")
+    payload: dict[str, Any] = {
+        "schema_version": EXECUTOR_ATTESTATION_SCHEMA,
+        "signing_key_id": signing_key_id,
+        "source_sha256": receipt_sha256(unsigned),
+        "evidence_sha256": receipt_sha256(evidence),
+        "evidence": json.loads(json.dumps(evidence, sort_keys=True)),
+    }
+    payload["signature_hmac_sha256"] = hmac.new(
+        signing_key, canonical_receipt_bytes(payload), hashlib.sha256
+    ).hexdigest()
+    return payload
+
+
+def verify_executor_artifact(
+    source: Any,
+    *,
+    signing_key: bytes | None,
+    signing_key_id: str = "gpu-executor",
+) -> list[str]:
+    """Verify detached executor evidence and its source/evidence relationships."""
+
+    errors: list[str] = []
+    if signing_key is None:
+        return ["executor attestation verifier key is unavailable"]
+    if not isinstance(source, dict):
+        return ["qualification source must be an object"]
+    attestation = source.get("executor_attestation")
+    if not isinstance(attestation, dict):
+        return ["qualification source executor attestation is missing"]
+    if attestation.get("schema_version") != EXECUTOR_ATTESTATION_SCHEMA:
+        errors.append("executor attestation schema is invalid")
+    if attestation.get("signing_key_id") != signing_key_id:
+        errors.append("executor attestation key identity is invalid")
+    evidence = attestation.get("evidence")
+    if not isinstance(evidence, dict):
+        errors.append("executor attestation evidence is missing")
+    else:
+        if attestation.get("evidence_sha256") != receipt_sha256(evidence):
+            errors.append("executor attestation evidence hash does not match")
+        if evidence.get("schema_version") != "gpu.executor-evidence.v1":
+            errors.append("executor evidence schema is invalid")
+        if evidence.get("trusted") is not True:
+            errors.append("executor evidence is not trusted")
+        for key in ("host_binding", "runtime_binding", "runtime_identity", "samples_sha256"):
+            if not _is_non_empty_string(evidence.get(key)):
+                errors.append(f"executor evidence {key} is missing")
+        if not isinstance(evidence.get("host_samples"), list) or not evidence["host_samples"]:
+            errors.append("executor evidence host samples are missing")
+        if not isinstance(evidence.get("service_metrics_sha256"), str):
+            errors.append("executor evidence service metrics hash is missing")
+        if evidence.get("fault_invariants") is not True:
+            errors.append("executor fault invariants were not cross-checked")
+    unsigned_attestation = dict(attestation)
+    signature = unsigned_attestation.pop("signature_hmac_sha256", None)
+    expected = hmac.new(
+        signing_key, canonical_receipt_bytes(unsigned_attestation), hashlib.sha256
+    ).hexdigest()
+    if not isinstance(signature, str) or not hmac.compare_digest(signature, expected):
+        errors.append("executor attestation signature is invalid")
+    unsigned_source = _without_executor_attestation(source)
+    if unsigned_source is None or attestation.get("source_sha256") != receipt_sha256(
+        unsigned_source
+    ):
+        errors.append("executor attestation source hash does not match")
+    return list(dict.fromkeys(errors))
+
+
 def build_one_stream_receipt(
     qualification: dict[str, Any],
     *,
     signing_key: bytes | None = None,
     signing_key_id: str = "gpu-qualification",
+    executor_signing_key: bytes | None = None,
+    executor_signing_key_id: str = "gpu-executor",
 ) -> dict[str, Any]:
     """Derive the readiness receipt only from a successful qualification receipt.
 
@@ -186,6 +295,13 @@ def build_one_stream_receipt(
 
     source = json.loads(json.dumps(qualification, sort_keys=True))
     source_errors = validate_qualification_source(source)
+    source_errors.extend(
+        verify_executor_artifact(
+            source,
+            signing_key=executor_signing_key,
+            signing_key_id=executor_signing_key_id,
+        )
+    )
     source_digest = receipt_sha256(source)
     ready = signing_key is not None and not source_errors
     result: dict[str, Any] = {
@@ -220,6 +336,8 @@ def validate_one_stream_receipt(
     max_age: timedelta = timedelta(hours=24),
     signing_key: bytes | None = None,
     signing_key_id: str = "gpu-qualification",
+    executor_signing_key: bytes | None = None,
+    executor_signing_key_id: str = "gpu-executor",
 ) -> list[str]:
     errors: list[str] = []
     if not isinstance(value, dict):
@@ -240,6 +358,13 @@ def validate_one_stream_receipt(
         errors.append("one-stream receipt is not bound to the real runtime")
     else:
         errors.extend(validate_qualification_source(source))
+        errors.extend(
+            verify_executor_artifact(
+                source,
+                signing_key=executor_signing_key,
+                signing_key_id=executor_signing_key_id,
+            )
+        )
         if source.get("schema_version") != "gpu.qualification-receipt.v1":
             errors.append("one-stream source receipt has the wrong schema")
         if source.get("status") != "qualified":
@@ -309,6 +434,8 @@ __all__ = [
     "canonical_telemetry_bytes",
     "receipt_sha256",
     "telemetry_hmac",
+    "sign_executor_artifact",
+    "verify_executor_artifact",
     "validate_qualification_source",
     "validate_one_stream_receipt",
 ]

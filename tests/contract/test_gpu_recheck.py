@@ -6,7 +6,12 @@ import json
 from pathlib import Path
 
 from scripts.gpu_receipts import build_one_stream_receipt, validate_one_stream_receipt
-from scripts.qualify_gpu import evaluate_telemetry, parse_telemetry, replay_probe
+from scripts.qualify_gpu import (
+    evaluate_telemetry,
+    load_approved_runtime_manifest,
+    parse_telemetry,
+    replay_probe,
+)
 
 
 def test_qualification_requires_an_approved_media_root() -> None:
@@ -120,3 +125,70 @@ def test_caller_injected_samples_never_satisfy_executor_capture_gate() -> None:
     )
 
     assert any("authenticated qualification-executor" in error for error in errors)
+
+
+def test_readiness_rejects_fabricated_dict_without_executor_attestation() -> None:
+    source = {
+        "schema_version": "gpu.qualification-receipt.v1",
+        "ticket": "GPU-107",
+        "generated_at": "2026-08-24T00:00:00Z",
+        "status": "qualified",
+        "qualification_label": "gpu-lab-qualified",
+        "profile": "rtx3090",
+        "claim_boundary": "lab",
+        "requested_gate": {"streams": 1, "real_runtime": True},
+        "host": {"identity": {"gpu": "RTX 3090", "driver": "580", "compute_capability": "8.6"}},
+        "image": {"image": "runtime@sha256:" + "a" * 64, "digest": "a" * 64},
+        "models": {"status": "ready", "manifest_sha256": "b" * 64},
+        "replay": {
+            "status": "ready",
+            "manifest_sha256": "c" * 64,
+            "media_root_policy": {"root_sha256": "d" * 64},
+        },
+        "runtime": {"status": "passed", "command": {"status": "passed"}, "metrics": {}},
+        "telemetry": {
+            "provenance": {"trusted": True},
+            "executor_capture": {"trusted": True, "host_binding": "h", "runtime_binding": "r"},
+            "cameras": {"camera-01": {}},
+        },
+        "fault_injection": {
+            "status": "passed",
+            "result": {"status": "passed", "attestation": "fake"},
+        },
+        "commands": [{"status": "passed"}],
+        "errors": [],
+        "recovery_steps": ["none"],
+    }
+    receipt = build_one_stream_receipt(source, signing_key=b"readiness-key")
+    assert receipt["status"] == "blocked"
+    assert any("executor attestation" in error for error in receipt["validation_errors"])
+
+
+def test_approved_manifest_is_required_for_qualifying_runtime(tmp_path: Path) -> None:
+    manifest = tmp_path / "runtime.yaml"
+    manifest.write_text(
+        "schema_version: gpu.qualification-executor-manifest.v1\n"
+        "profile: rtx3090\nqualifying: true\n"
+        "image: runtime@sha256:" + "a" * 64 + "\n"
+        "runtime:\n  identity: gpu-runtime-v1\n"
+        "  command: [docker, run, --rm, 'runtime@sha256:" + "a" * 64 + "']\n"
+        "faults: {}\n",
+        encoding="utf-8",
+    )
+    loaded, errors = load_approved_runtime_manifest(manifest, profile="rtx3090")
+    assert errors == []
+    assert loaded is not None
+    assert loaded["runtime"]["identity"] == "gpu-runtime-v1"
+
+
+def test_dev_manifest_cannot_be_used_for_qualification(tmp_path: Path) -> None:
+    manifest = tmp_path / "dev.yaml"
+    manifest.write_text(
+        "schema_version: gpu.qualification-executor-manifest.v1\n"
+        "profile: rtx3090\nqualifying: false\n"
+        "image: runtime@sha256:" + "a" * 64 + "\n"
+        "runtime:\n  identity: gpu-runtime-v1\n  command: [echo, dev]\n",
+        encoding="utf-8",
+    )
+    _loaded, errors = load_approved_runtime_manifest(manifest, profile="rtx3090")
+    assert any("qualifying" in error for error in errors)

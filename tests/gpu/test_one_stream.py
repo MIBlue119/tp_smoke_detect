@@ -45,6 +45,22 @@ def test_runtime_timeout_is_recorded_without_claiming_success() -> None:
     assert metrics["executor_capture"]["trusted"] is False
 
 
+def test_runtime_does_not_expose_signing_key_or_challenge_to_child() -> None:
+    result, _metrics = run_runtime(
+        [
+            sys.executable,
+            "-c",
+            "import json, os; print(json.dumps({k: v for k, v in os.environ.items() if 'SIGNING' in k or 'CHALLENGE' in k}), flush=True)",  # noqa: E501
+        ],
+        timeout=1.0,
+        sample_interval=0.1,
+        executor_signing_key=b"executor-secret",
+    )
+    assert result.status == "passed"
+    assert '"SMOKE_GPU_TELEMETRY_SIGNING_KEY_FILE"' not in result.stdout_tail
+    assert '"SMOKE_GPU_TELEMETRY_CHALLENGE"' not in result.stdout_tail
+
+
 def test_telemetry_thresholds_reject_field_name_only_or_slow_runtime() -> None:
     metrics = parse_telemetry(
         [

@@ -19,12 +19,15 @@ def main() -> int:
     parser.add_argument("--image-digest", required=True)
     parser.add_argument("--signing-key", type=Path, required=True)
     parser.add_argument("--signing-key-id", default="gpu-qualification")
+    parser.add_argument("--executor-signing-key", type=Path, required=True)
+    parser.add_argument("--executor-signing-key-id", default="gpu-executor")
     args = parser.parse_args()
     try:
         import json
 
         value = json.loads(args.receipt.read_text(encoding="utf-8"))
         key = args.signing_key.read_bytes()
+        executor_key = args.executor_signing_key.read_bytes()
         import hashlib
 
         manifest_hash = hashlib.sha256(args.manifest.read_bytes()).hexdigest()
@@ -37,6 +40,8 @@ def main() -> int:
         image_digest=args.image_digest,
         signing_key=key,
         signing_key_id=args.signing_key_id,
+        executor_signing_key=executor_key,
+        executor_signing_key_id=args.executor_signing_key_id,
     )
     if errors:
         for error in errors:

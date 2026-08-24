@@ -26,12 +26,25 @@ DEPENDENCIES = (
 )
 MANIFEST = Path(os.environ.get("SMOKE_MODEL_MANIFEST", "/models/manifest/model-release.json"))
 IMAGE_PINS = Path(os.environ.get("SMOKE_IMAGE_PINS", "/bundle/image-pins.yaml"))
+READINESS_KEY = Path(
+    os.environ.get("SMOKE_GPU_READINESS_VERIFY_KEY", "/run/secrets/gpu_readiness_signing_key")
+)
+EXECUTOR_KEY = Path(
+    os.environ.get("SMOKE_GPU_EXECUTOR_VERIFY_KEY", "/run/secrets/gpu_executor_verify_key")
+)
 
 
 def readiness() -> tuple[bool, dict[str, Any]]:
     errors: list[str] = []
     try:
         value = json.loads(RECEIPT.read_text(encoding="utf-8"))
+        try:
+            readiness_key = READINESS_KEY.read_bytes()
+            executor_key = EXECUTOR_KEY.read_bytes()
+        except OSError as exc:
+            readiness_key = None
+            executor_key = None
+            errors.append(f"GPU signature verification keys unavailable: {exc}")
         manifest_sha256 = None
         image_digest = None
         try:
@@ -44,7 +57,13 @@ def readiness() -> tuple[bool, dict[str, Any]]:
             errors.append(f"GPU identity inputs unavailable: {exc}")
         errors.extend(
             validate_one_stream_receipt(
-                value, manifest_sha256=manifest_sha256, image_digest=image_digest
+                value,
+                manifest_sha256=manifest_sha256,
+                image_digest=image_digest,
+                signing_key=readiness_key,
+                signing_key_id=os.environ.get("SMOKE_GPU_READINESS_KEY_ID", "gpu-readiness"),
+                executor_signing_key=executor_key,
+                executor_signing_key_id=os.environ.get("SMOKE_GPU_EXECUTOR_KEY_ID", "gpu-executor"),
             )
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
