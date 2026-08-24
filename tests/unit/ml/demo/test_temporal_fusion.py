@@ -78,6 +78,24 @@ def test_same_input_is_byte_stable_and_manual_miss_is_separate() -> None:
     first = DeterministicFusion().process(_frames(5))
     second = DeterministicFusion().process(_frames(5))
     assert first == second
+
+
+def test_weak_entry_frames_do_not_accumulate_and_reentry_requires_persistence() -> None:
+    weak = _person().cigarettes[0]
+    weak = CigaretteDetection(weak.box, 0.20)
+    weak_frame = FrameDetections(0, 0, _person().persons, (weak,))
+    strong = _frames(1)[0]
+    first = tuple(
+        FrameDetections(i, i * 33_333_333, weak_frame.persons, weak_frame.cigarettes)
+        for i in range(4)
+    ) + (FrameDetections(4, 4 * 33_333_333, strong.persons, strong.cigarettes),)
+    # Four weak plus one strong is not an entry streak.
+    assert not DeterministicFusion().process(first).events
+    closed = first + tuple(FrameDetections(i, i * 33_333_333, ()) for i in range(5, 12))
+    reentry = closed + tuple(
+        FrameDetections(i, i * 33_333_333, strong.persons, strong.cigarettes) for i in range(12, 16)
+    )
+    assert len(DeterministicFusion().process(reentry).events) == 1
     assert baseline_miss_event("track-1", 10, 20).state is EventState.BASELINE_MISS
 
 

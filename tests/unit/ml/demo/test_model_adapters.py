@@ -4,6 +4,7 @@ import hashlib
 import os
 from pathlib import Path
 
+import ml.demo.models as models
 import pytest
 from ml.demo.export import compare_outputs
 from ml.demo.models import (
@@ -34,6 +35,22 @@ def test_model_spec_rejects_changed_bytes_before_loader(tmp_path: Path) -> None:
     spec.path.write_bytes(b"tampered")
     with pytest.raises(ModelAdapterError, match="size mismatch"):
         spec.validate()
+
+
+def test_host_loader_rejects_pickle_and_accepts_onnx_without_pickle_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint = tmp_path / "model.pt"
+    checkpoint.write_bytes(b"pickle")
+    spec = ModelSpec("person_pose", "r1", checkpoint, hashlib.sha256(b"pickle").hexdigest(), 6)
+    with pytest.raises(ModelAdapterError, match="refuses pickle"):
+        models._load_yolo(spec, enforce_isolation=False)
+    safe = tmp_path / "model.onnx"
+    safe.write_bytes(b"onnx")
+    safe_spec = ModelSpec("person_pose", "r1", safe, hashlib.sha256(b"onnx").hexdigest(), 4)
+    sentinel = object()
+    monkeypatch.setattr("ultralytics.YOLO", lambda *args, **kwargs: sentinel)
+    assert models._load_yolo(safe_spec, enforce_isolation=False) is sentinel
 
 
 def test_sanitized_environment_removes_secret_names() -> None:
