@@ -1,20 +1,85 @@
 {
-  "schema_version": "demo.remediation-receipt.v1",
-  "ticket": "DEMO-205",
-  "run_id": "shibuya-GByZa0qbA8A-r1",
-  "runtime": "NVIDIA GeForce RTX 3090 / CUDA 12.8 / PyTorch 2.9.1+cu128",
-  "frames": 1248,
+  "annotation_sha256": "99b7c3ecdf59a2c5f62e651c6fa46949b7d5c7194771ae9d539655be2ff960b6",
+  "boundary_image_id": "sha256:3eb2c8dcbbffe59cb969690c6b48af7e72dde6d0a8a484995c841764902cf2b9",
+  "boundary_receipt_sha256": "9a291cbf9968565811de5dd704e93804b1d393a1f955f9a6a9059a166e600017",
+  "checkpoint_lineage": [
+    {
+      "input": "yolo11n-pose-v8.3.0.pt",
+      "loaded": true,
+      "sha256": "869e83fcdffdc7371fa4e34cd8e51c838cc729571d1635e5141e3075e9319dc0",
+      "top_level_keys": [
+        "best_fitness",
+        "date",
+        "docs",
+        "ema",
+        "epoch",
+        "license",
+        "model",
+        "optimizer",
+        "train_args",
+        "train_metrics",
+        "train_results",
+        "updates",
+        "version"
+      ]
+    },
+    {
+      "input": "heiher-smoking-detection-12a54cda.pt",
+      "loaded": true,
+      "sha256": "0ef558d3cf049d0acbb3f2322bc9e4e53db1a107426e3669622176c30c054d82",
+      "top_level_keys": [
+        "best_fitness",
+        "date",
+        "docs",
+        "ema",
+        "epoch",
+        "license",
+        "model",
+        "optimizer",
+        "train_args",
+        "train_metrics",
+        "train_results",
+        "updates",
+        "version"
+      ]
+    }
+  ],
+  "contact_sheet_sha256": "2e92f59b032092495ff652f522e3879d47073e472a259942ba9fbf772d2c7d40",
   "duration_seconds": 41.6416,
   "event_count": 0,
-  "output_bytes": 10899217,
-  "output_sha256": "b6ce94c632bb0e4eecda2bb5e2e3aa41b686d719c73d563d3d22a94e163db7cd",
-  "annotation_sha256": "fac3892cdde56b1eee8d8fe3a0a8b5a045622df8801ca5f2412a2390bc6d6631",
-  "manual_review_sha256": "bd1ce9faca78707483d7878c24b038cd14d80c23ffd982dae147cb1d73f7ffd0",
-  "contact_sheet_sha256": "50345ddf0c8fecdbe818e42b8b1b7fde7215f8f4a641276f9c1435fb0a74e1dc",
-  "boundary_receipt_sha256": "a7b2de425ceb11b6d2c591a487287b314f2f13cfe056dca89313936c221818fc",
-  "boundary_image_id": "sha256:3eb2c8dcbbffe59cb969690c6b48af7e72dde6d0a8a484995c841764902cf2b9",
-  "runtime_receipt_sha256": "438a726f1d9330c55000f44c05b0d348159ab308cf2f332514e9c0ef1a4d5673",
+  "export_backends": {
+    "onnx": "not_attempted_in_u5",
+    "tensorrt": "not_attempted_in_u5"
+  },
+  "follow_up": "Only consider RT-DETR research after a broader labelled evaluation demonstrates visible misses; do not train on this clip.",
+  "frames": 1248,
   "manual_review": "21 completed unclear anchors; no pending placeholders",
+  "manual_review_sha256": "77c1448eb4b1f6a512e5b5a801b572c5533837b8d9168f128c9454366eff98be",
+  "output_bytes": 11127383,
+  "output_sha256": "d975b7f47f7e6ef92348b2bacb6e21fd8f537b17cb4b3c1d8687ad2a0e4d366c",
   "production_qualified": false,
-  "follow_up": "Only consider RT-DETR research after a broader labelled evaluation demonstrates visible misses; do not train on this clip."
+  "run_id": "shibuya-GByZa0qbA8A-r1",
+  "runtime": "NVIDIA GeForce RTX 3090 / CUDA 12.8 / PyTorch 2.9.1+cu128",
+  "runtime_receipt_sha256": "438a726f1d9330c55000f44c05b0d348159ab308cf2f332514e9c0ef1a4d5673",
+  "safe_artifacts": [
+    {
+      "artifact_id": "person_pose.onnx",
+      "format": "onnx",
+      "role": "person_pose",
+      "sha256": "ce2a9e954ad5dd7959ee302d8f1e4e940498b8108a10842a24b643e85c0d9899",
+      "size_bytes": 11810560,
+      "source_checkpoint_sha256": "869e83fcdffdc7371fa4e34cd8e51c838cc729571d1635e5141e3075e9319dc0"
+    },
+    {
+      "artifact_id": "cigarette_detector.onnx",
+      "format": "onnx",
+      "role": "cigarette_detector",
+      "sha256": "199b84c962d6c130e53d87423e63d74bbfd0bdf8ff09d59ccc1c3bc54a3ca928",
+      "size_bytes": 80376940,
+      "source_checkpoint_sha256": "0ef558d3cf049d0acbb3f2322bc9e4e53db1a107426e3669622176c30c054d82"
+    }
+  ],
+  "schema_version": "demo.remediation-receipt.v1",
+  "status": "completed_cuda_onnx",
+  "ticket": "DEMO-205"
 }
