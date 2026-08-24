@@ -27,7 +27,7 @@ DEPENDENCIES = (
 MANIFEST = Path(os.environ.get("SMOKE_MODEL_MANIFEST", "/models/manifest/model-release.json"))
 IMAGE_PINS = Path(os.environ.get("SMOKE_IMAGE_PINS", "/bundle/image-pins.yaml"))
 READINESS_KEY = Path(
-    os.environ.get("SMOKE_GPU_READINESS_VERIFY_KEY", "/run/secrets/gpu_readiness_signing_key")
+    os.environ.get("SMOKE_GPU_READINESS_VERIFY_KEY", "/run/secrets/gpu_readiness_verify_key")
 )
 EXECUTOR_KEY = Path(
     os.environ.get("SMOKE_GPU_EXECUTOR_VERIFY_KEY", "/run/secrets/gpu_executor_verify_key")
@@ -60,9 +60,9 @@ def readiness() -> tuple[bool, dict[str, Any]]:
                 value,
                 manifest_sha256=manifest_sha256,
                 image_digest=image_digest,
-                signing_key=readiness_key,
+                readiness_verify_key=readiness_key,
                 signing_key_id=os.environ.get("SMOKE_GPU_READINESS_KEY_ID", "gpu-readiness"),
-                executor_signing_key=executor_key,
+                executor_verify_key=executor_key,
                 executor_signing_key_id=os.environ.get("SMOKE_GPU_EXECUTOR_KEY_ID", "gpu-executor"),
             )
         )

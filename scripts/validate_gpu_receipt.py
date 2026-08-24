@@ -9,7 +9,7 @@ from pathlib import Path
 try:
     from scripts.gpu_receipts import validate_one_stream_receipt
 except ModuleNotFoundError:  # container entrypoint copies the helper beside us
-    from gpu_receipts import validate_one_stream_receipt
+    from gpu_receipts import validate_one_stream_receipt  # type: ignore[import-not-found, no-redef]
 
 
 def main() -> int:
@@ -17,17 +17,29 @@ def main() -> int:
     parser.add_argument("--receipt", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--image-digest", required=True)
-    parser.add_argument("--signing-key", type=Path, required=True)
+    parser.add_argument(
+        "--readiness-verify-key",
+        "--signing-key",  # compatibility alias; this is public verification material
+        dest="readiness_verify_key",
+        type=Path,
+        required=True,
+    )
     parser.add_argument("--signing-key-id", default="gpu-qualification")
-    parser.add_argument("--executor-signing-key", type=Path, required=True)
+    parser.add_argument(
+        "--executor-verify-key",
+        "--executor-signing-key",
+        dest="executor_verify_key",
+        type=Path,
+        required=True,
+    )
     parser.add_argument("--executor-signing-key-id", default="gpu-executor")
     args = parser.parse_args()
     try:
         import json
 
         value = json.loads(args.receipt.read_text(encoding="utf-8"))
-        key = args.signing_key.read_bytes()
-        executor_key = args.executor_signing_key.read_bytes()
+        key = args.readiness_verify_key.read_bytes()
+        executor_key = args.executor_verify_key.read_bytes()
         import hashlib
 
         manifest_hash = hashlib.sha256(args.manifest.read_bytes()).hexdigest()
@@ -38,9 +50,9 @@ def main() -> int:
         value,
         manifest_sha256=manifest_hash,
         image_digest=args.image_digest,
-        signing_key=key,
+        readiness_verify_key=key,
         signing_key_id=args.signing_key_id,
-        executor_signing_key=executor_key,
+        executor_verify_key=executor_key,
         executor_signing_key_id=args.executor_signing_key_id,
     )
     if errors:

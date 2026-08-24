@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import hmac
 import json
 import os
 import re
@@ -30,12 +29,15 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from ml.registry.model_repository import ModelRepositoryManifest, verify_local_artifact
+
 from scripts.gpu_receipts import (
     build_one_stream_receipt,
-    canonical_receipt_bytes,
+    public_key_for_private,
+    sign_ed25519,
     sign_executor_artifact,
-    telemetry_hmac,
+    verify_ed25519,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +49,14 @@ DEFAULT_REPLAY = ROOT / "tests/load/replay-pack.yaml"
 DEFAULT_MODEL_MANIFEST = ROOT / "model-repository/manifest/model-release.json"
 DEFAULT_IMAGE_PINS = ROOT / "deploy/image-pins.yaml"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+APPROVED_RUNTIME_MANIFEST_RELATIVE = Path("configs/gpu-qualification-manifest.yaml")
+APPROVED_RUNTIME_MANIFEST_PATH = ROOT / APPROVED_RUNTIME_MANIFEST_RELATIVE
+# This digest is intentionally a source/build identity, not a caller-controlled
+# configuration value. Any qualifying manifest edit requires a reviewed code
+# change that updates this pin and triggers a new qualification.
+APPROVED_RUNTIME_MANIFEST_SHA256 = (
+    "b3d19022a9e4d96a67aa1f80560b1340db8afafc93f0ecb14c0b823b4fe1fa8f"
+)
 REQUIRED_ROLES = {"person_detector", "pose_landmarker", "hand_landmarker", "crop_classifier"}
 TELEMETRY_FIELDS = {
     "scheduled_samples",
@@ -176,6 +186,28 @@ def load_document(path: Path) -> tuple[Any | None, list[str]]:
 
 _MANIFEST_PLACEHOLDERS = {"{image}", "{replay_manifest}", "{model_manifest}", "{fault_injection}"}
 _SHELL_TOKENS = {"sh", "bash", "zsh", "dash", "-c", "--command"}
+# Qualification children are untrusted measured processes.  They receive only
+# deterministic process/runtime knobs; in particular no host environment
+# wholesale copy, credential, token, key, proxy, or challenge can cross this
+# boundary.
+_CHILD_ENV_ALLOWLIST = (
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "NVIDIA_VISIBLE_DEVICES",
+    "NVIDIA_DRIVER_CAPABILITIES",
+    "DOCKER_CONFIG",
+)
+
+
+def _minimal_child_environment() -> dict[str, str]:
+    return {
+        name: os.environ[name]
+        for name in _CHILD_ENV_ALLOWLIST
+        if name in os.environ and os.environ[name]
+    }
 
 
 def load_approved_runtime_manifest(
@@ -190,7 +222,25 @@ def load_approved_runtime_manifest(
     qualifying manifest.
     """
 
-    raw, errors = load_document(path)
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        return None, [f"approved runtime manifest cannot be resolved: {exc}"]
+    if resolved != APPROVED_RUNTIME_MANIFEST_PATH:
+        return None, [
+            "approved runtime manifest must be the checked-in canonical path "
+            f"{APPROVED_RUNTIME_MANIFEST_RELATIVE}"
+        ]
+    try:
+        actual_digest = sha256_file(resolved)
+    except OSError as exc:
+        return None, [f"approved runtime manifest cannot be hashed: {exc}"]
+    if actual_digest != APPROVED_RUNTIME_MANIFEST_SHA256:
+        return None, [
+            "approved runtime manifest digest does not match the code-pinned "
+            f"qualification digest ({APPROVED_RUNTIME_MANIFEST_SHA256})"
+        ]
+    raw, errors = load_document(resolved)
     if errors:
         return None, errors
     if not isinstance(raw, dict):
@@ -503,7 +553,7 @@ def parse_telemetry(
     expected_runtime_start_ticks: str | None = None,
     expected_host_binding: str | None = None,
     expected_challenge: str | None = None,
-    signing_key: bytes | None = None,
+    verify_key: bytes | None = None,
     expected_runtime_identity: str | None = None,
 ) -> dict[str, Any]:
     """Parse only runtime-owned telemetry while retaining rejected rows.
@@ -571,10 +621,11 @@ def parse_telemetry(
             and value.get("runtime_identity") != expected_runtime_identity
         ):
             reasons.append("telemetry runtime identity does not match approved manifest")
-        signature = value.get("signature_hmac_sha256")
-        if signing_key is not None and (
-            not isinstance(signature, str)
-            or not hmac.compare_digest(signature, telemetry_hmac(value, signing_key))
+        signature = value.get("signature_ed25519")
+        unsigned_value = dict(value)
+        unsigned_value.pop("signature_ed25519", None)
+        if verify_key is not None and not verify_ed25519(
+            unsigned_value, signature, verify_key
         ):
             reasons.append("telemetry signature is invalid")
         if not isinstance(value.get("sequence"), int) or value["sequence"] < 0:
@@ -674,9 +725,9 @@ def parse_telemetry(
                 "avg": sum(values) / len(values),
             }
     for field in ("runtime_identity",):
-        values = [str(row[field]).strip() for row in rows if str(row.get(field, "")).strip()]
-        if values:
-            summary[field] = values[-1]
+        string_values = [str(row[field]).strip() for row in rows if str(row.get(field, "")).strip()]
+        if string_values:
+            summary[field] = string_values[-1]
     isolation = next(
         (
             row.get("fault_isolation")
@@ -721,11 +772,11 @@ def parse_telemetry(
                     "avg": sum(values) / len(values),
                 }
         for field in ("model_revision", "runtime_identity"):
-            values = [
+            string_values = [
                 str(row[field]).strip() for row in camera_rows if str(row.get(field, "")).strip()
             ]
-            if values:
-                camera_summary[field] = {"min": values[0], "max": values[-1]}
+            if string_values:
+                camera_summary[field] = {"min": string_values[0], "max": string_values[-1]}
         camera_roles: dict[str, set[str]] = {}
         for row in camera_rows:
             revisions = row.get("model_revisions")
@@ -877,21 +928,14 @@ def run_runtime(
     timeout: float,
     sample_interval: float = 1.0,
     *,
-    executor_signing_key: bytes | None = None,
+    executor_signing_key: bytes | Ed25519PrivateKey | None = None,
     executor_signing_key_id: str = "gpu-executor",
     expected_runtime_identity: str | None = None,
     expected_container_digest: str | None = None,
 ) -> tuple[CommandResult, dict[str, Any]]:
     started = time.monotonic()
     binding_host = host_binding()
-    child_env = os.environ.copy()
-    for secret_name in (
-        "SMOKE_GPU_TELEMETRY_SIGNING_KEY_FILE",
-        "SMOKE_GPU_TELEMETRY_SIGNING_KEY",
-        "SMOKE_GPU_TELEMETRY_CHALLENGE",
-        "SMOKE_GPU_EXECUTOR_SIGNING_KEY_FILE",
-    ):
-        child_env.pop(secret_name, None)
+    child_env = _minimal_child_environment()
     try:
         process = subprocess.Popen(
             argv,
@@ -1046,9 +1090,9 @@ def run_runtime(
         }
     if executor_signing_key is not None and evidence["trusted"]:
         unsigned = dict(evidence)
-        metrics["executor_capture"]["signature_hmac_sha256"] = hmac.new(
-            executor_signing_key, canonical_receipt_bytes(unsigned), hashlib.sha256
-        ).hexdigest()
+        metrics["executor_capture"]["signature_ed25519"] = sign_ed25519(
+            unsigned, executor_signing_key
+        )
     metrics["executor_evidence"] = evidence
     return result, metrics
 
@@ -1060,14 +1104,7 @@ def run_attested_fault_runtime(
     expected_runtime_identity: str | None = None,
 ) -> tuple[CommandResult, dict[str, Any] | None]:
     """Run an approved fault command; the executor signs its result later."""
-    env = os.environ.copy()
-    for secret_name in (
-        "SMOKE_GPU_TELEMETRY_SIGNING_KEY_FILE",
-        "SMOKE_GPU_TELEMETRY_SIGNING_KEY",
-        "SMOKE_GPU_TELEMETRY_CHALLENGE",
-        "SMOKE_GPU_EXECUTOR_SIGNING_KEY_FILE",
-    ):
-        env.pop(secret_name, None)
+    env = _minimal_child_environment()
     env["SMOKE_GPU_TELEMETRY_HOST_BINDING"] = host_binding()
     started = time.monotonic()
     try:
@@ -1087,8 +1124,8 @@ def run_attested_fault_runtime(
         process.kill()
         stdout, stderr = process.communicate()
         status = "timeout"
-        stdout = (exc.stdout or "") + stdout
-        stderr = (exc.stderr or "") + stderr
+        stdout = _text(exc.stdout) + stdout
+        stderr = _text(exc.stderr) + stderr
     result = CommandResult(
         tuple(argv),
         status,
@@ -1341,9 +1378,13 @@ def build_receipt(args: argparse.Namespace) -> tuple[dict[str, Any], list[Comman
     if status == "qualified" and args.streams == 1:
         receipt["one_stream"] = build_one_stream_receipt(
             receipt,
-            signing_key=readiness_key,
+            readiness_signing_key=readiness_key,
             signing_key_id=args.receipt_signing_key_id,
-            executor_signing_key=executor_signing_key,
+            executor_verify_key=(
+                public_key_for_private(executor_signing_key)
+                if executor_signing_key is not None
+                else None
+            ),
             executor_signing_key_id=args.executor_signing_key_id,
         )
     return receipt, all_commands

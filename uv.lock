@@ -1619,6 +1619,7 @@ name = "tp-smoke-detect"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "paho-mqtt" },
     { name = "pydantic" },
@@ -1644,6 +1645,7 @@ ml = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=50,<51" },
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "paho-mqtt", specifier = ">=2.1,<3" },
     { name = "pydantic", specifier = ">=2.10,<3" },

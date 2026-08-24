@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
-import hmac
 import json
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 
 QUALIFICATION_REQUIRED_KEYS = {
     "schema_version",
@@ -158,7 +165,7 @@ def validate_qualification_source(source: Any) -> list[str]:
             errors.append("qualification source executor attestation source hash is missing")
         if not isinstance(attestation.get("evidence"), dict):
             errors.append("qualification source executor attestation evidence is missing")
-        if not _is_non_empty_string(attestation.get("signature_hmac_sha256")):
+        if not _is_non_empty_string(attestation.get("signature_ed25519")):
             errors.append("qualification source executor attestation signature is missing")
     return list(dict.fromkeys(errors))
 
@@ -179,18 +186,65 @@ def canonical_telemetry_bytes(value: Any) -> bytes:
     if not isinstance(value, dict):
         return canonical_receipt_bytes(value)
     unsigned = dict(value)
-    unsigned.pop("signature_hmac_sha256", None)
+    unsigned.pop("signature_ed25519", None)
     return canonical_receipt_bytes(unsigned)
 
 
-def telemetry_hmac(value: Any, signing_key: bytes) -> str:
-    return hmac.new(signing_key, canonical_telemetry_bytes(value), hashlib.sha256).hexdigest()
+def _private_key(value: bytes | Ed25519PrivateKey) -> Ed25519PrivateKey:
+    if isinstance(value, Ed25519PrivateKey):
+        return value
+    if len(value) == 32:
+        return Ed25519PrivateKey.from_private_bytes(value)
+    loaded = serialization.load_pem_private_key(value, password=None)
+    if not isinstance(loaded, Ed25519PrivateKey):
+        raise ValueError("key is not an Ed25519 private key")
+    return loaded
+
+
+def _public_key(value: bytes | Ed25519PublicKey) -> Ed25519PublicKey:
+    if isinstance(value, Ed25519PublicKey):
+        return value
+    if len(value) == 32:
+        return Ed25519PublicKey.from_public_bytes(value)
+    loaded = serialization.load_pem_public_key(value)
+    if not isinstance(loaded, Ed25519PublicKey):
+        raise ValueError("key is not an Ed25519 public key")
+    return loaded
+
+
+def sign_ed25519(value: Any, signing_key: bytes | Ed25519PrivateKey) -> str:
+    """Sign canonical JSON with an Ed25519 private key, encoded as base64."""
+
+    return base64.b64encode(_private_key(signing_key).sign(canonical_receipt_bytes(value))).decode(
+        "ascii"
+    )
+
+
+def public_key_for_private(
+    signing_key: bytes | Ed25519PrivateKey,
+) -> Ed25519PublicKey:
+    """Derive only the verifier half for an in-process host handoff."""
+
+    return _private_key(signing_key).public_key()
+
+
+def verify_ed25519(value: Any, signature: Any, verify_key: bytes | Ed25519PublicKey) -> bool:
+    """Verify a canonical JSON Ed25519 signature without accepting shared secrets."""
+
+    if not isinstance(signature, str):
+        return False
+    try:
+        signature_bytes = base64.b64decode(signature.encode("ascii"), validate=True)
+        _public_key(verify_key).verify(signature_bytes, canonical_receipt_bytes(value))
+    except (ValueError, TypeError, InvalidSignature):
+        return False
+    return True
 
 
 def _without_executor_attestation(source: Any) -> dict[str, Any] | None:
     if not isinstance(source, dict):
         return None
-    unsigned = json.loads(json.dumps(source, sort_keys=True))
+    unsigned = cast(dict[str, Any], json.loads(json.dumps(source, sort_keys=True)))
     unsigned.pop("executor_attestation", None)
     return unsigned
 
@@ -199,7 +253,7 @@ def sign_executor_artifact(
     source: dict[str, Any],
     evidence: dict[str, Any],
     *,
-    signing_key: bytes,
+    signing_key: bytes | Ed25519PrivateKey,
     signing_key_id: str = "gpu-executor",
 ) -> dict[str, Any]:
     """Attach executor-owned evidence signed after independent cross-checks.
@@ -219,22 +273,20 @@ def sign_executor_artifact(
         "evidence_sha256": receipt_sha256(evidence),
         "evidence": json.loads(json.dumps(evidence, sort_keys=True)),
     }
-    payload["signature_hmac_sha256"] = hmac.new(
-        signing_key, canonical_receipt_bytes(payload), hashlib.sha256
-    ).hexdigest()
+    payload["signature_ed25519"] = sign_ed25519(payload, signing_key)
     return payload
 
 
 def verify_executor_artifact(
     source: Any,
     *,
-    signing_key: bytes | None,
+    verify_key: bytes | Ed25519PublicKey | None,
     signing_key_id: str = "gpu-executor",
 ) -> list[str]:
     """Verify detached executor evidence and its source/evidence relationships."""
 
     errors: list[str] = []
-    if signing_key is None:
+    if verify_key is None:
         return ["executor attestation verifier key is unavailable"]
     if not isinstance(source, dict):
         return ["qualification source must be an object"]
@@ -265,11 +317,8 @@ def verify_executor_artifact(
         if evidence.get("fault_invariants") is not True:
             errors.append("executor fault invariants were not cross-checked")
     unsigned_attestation = dict(attestation)
-    signature = unsigned_attestation.pop("signature_hmac_sha256", None)
-    expected = hmac.new(
-        signing_key, canonical_receipt_bytes(unsigned_attestation), hashlib.sha256
-    ).hexdigest()
-    if not isinstance(signature, str) or not hmac.compare_digest(signature, expected):
+    signature = unsigned_attestation.pop("signature_ed25519", None)
+    if verify_key is None or not verify_ed25519(unsigned_attestation, signature, verify_key):
         errors.append("executor attestation signature is invalid")
     unsigned_source = _without_executor_attestation(source)
     if unsigned_source is None or attestation.get("source_sha256") != receipt_sha256(
@@ -282,9 +331,9 @@ def verify_executor_artifact(
 def build_one_stream_receipt(
     qualification: dict[str, Any],
     *,
-    signing_key: bytes | None = None,
+    readiness_signing_key: bytes | Ed25519PrivateKey | None = None,
     signing_key_id: str = "gpu-qualification",
-    executor_signing_key: bytes | None = None,
+    executor_verify_key: bytes | Ed25519PublicKey | None = None,
     executor_signing_key_id: str = "gpu-executor",
 ) -> dict[str, Any]:
     """Derive the readiness receipt only from a successful qualification receipt.
@@ -298,12 +347,12 @@ def build_one_stream_receipt(
     source_errors.extend(
         verify_executor_artifact(
             source,
-            signing_key=executor_signing_key,
+            verify_key=executor_verify_key,
             signing_key_id=executor_signing_key_id,
         )
     )
     source_digest = receipt_sha256(source)
-    ready = signing_key is not None and not source_errors
+    ready = readiness_signing_key is not None and not source_errors
     result: dict[str, Any] = {
         "schema_version": "gpu.one-stream-receipt.v1",
         "status": "one-stream-ready" if ready else "blocked",
@@ -319,11 +368,9 @@ def build_one_stream_receipt(
     }
     if source_errors:
         result["validation_errors"] = source_errors
-    if signing_key:
+    if readiness_signing_key:
         result["signature_key_id"] = signing_key_id
-        result["signature_hmac_sha256"] = hmac.new(
-            signing_key, canonical_receipt_bytes(result), hashlib.sha256
-        ).hexdigest()
+        result["signature_ed25519"] = sign_ed25519(result, readiness_signing_key)
     return result
 
 
@@ -334,9 +381,9 @@ def validate_one_stream_receipt(
     image_digest: str | None = None,
     now: datetime | None = None,
     max_age: timedelta = timedelta(hours=24),
-    signing_key: bytes | None = None,
+    readiness_verify_key: bytes | Ed25519PublicKey | None = None,
     signing_key_id: str = "gpu-qualification",
-    executor_signing_key: bytes | None = None,
+    executor_verify_key: bytes | Ed25519PublicKey | None = None,
     executor_signing_key_id: str = "gpu-executor",
 ) -> list[str]:
     errors: list[str] = []
@@ -346,7 +393,7 @@ def validate_one_stream_receipt(
         errors.append("one-stream receipt schema_version is not gpu.one-stream-receipt.v1")
     if value.get("status") != "one-stream-ready":
         errors.append("one-stream receipt is not one-stream-ready")
-    if signing_key is None:
+    if readiness_verify_key is None:
         errors.append("one-stream receipt requires a trusted signing key")
     if manifest_sha256 is not None and value.get("manifest_sha256") != manifest_sha256:
         errors.append("one-stream receipt manifest hash does not match active manifest")
@@ -361,7 +408,7 @@ def validate_one_stream_receipt(
         errors.extend(
             verify_executor_artifact(
                 source,
-                signing_key=executor_signing_key,
+                verify_key=executor_verify_key,
                 signing_key_id=executor_signing_key_id,
             )
         )
@@ -414,16 +461,13 @@ def validate_one_stream_receipt(
                 errors.append("one-stream receipt is from the future")
         except ValueError:
             errors.append("one-stream receipt generated_at is invalid")
-    if signing_key is not None:
-        signature = value.get("signature_hmac_sha256")
+    if readiness_verify_key is not None:
+        signature = value.get("signature_ed25519")
         if value.get("signature_key_id") != signing_key_id:
             errors.append("one-stream receipt signature key identity is invalid")
         unsigned = dict(value)
-        unsigned.pop("signature_hmac_sha256", None)
-        expected = hmac.new(
-            signing_key, canonical_receipt_bytes(unsigned), hashlib.sha256
-        ).hexdigest()
-        if not isinstance(signature, str) or not hmac.compare_digest(signature, expected):
+        unsigned.pop("signature_ed25519", None)
+        if not verify_ed25519(unsigned, signature, readiness_verify_key):
             errors.append("one-stream receipt signature is invalid")
     return list(dict.fromkeys(errors))
 
@@ -433,7 +477,9 @@ __all__ = [
     "canonical_receipt_bytes",
     "canonical_telemetry_bytes",
     "receipt_sha256",
-    "telemetry_hmac",
+    "public_key_for_private",
+    "sign_ed25519",
+    "verify_ed25519",
     "sign_executor_artifact",
     "verify_executor_artifact",
     "validate_qualification_source",

@@ -5,7 +5,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.gpu_receipts import build_one_stream_receipt, validate_one_stream_receipt
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from scripts.gpu_receipts import (
+    build_one_stream_receipt,
+    sign_ed25519,
+    validate_one_stream_receipt,
+    verify_ed25519,
+)
 from scripts.qualify_gpu import (
     evaluate_telemetry,
     load_approved_runtime_manifest,
@@ -70,11 +76,14 @@ def test_minimal_signed_source_cannot_be_promoted_to_one_stream_ready() -> None:
         "telemetry": {"provenance": {"trusted": True}},
         "fault_injection": {"status": "passed"},
     }
-    receipt = build_one_stream_receipt(source, signing_key=b"test-key")
+    receipt = build_one_stream_receipt(source, readiness_signing_key=Ed25519PrivateKey.generate())
 
     assert receipt["status"] == "blocked"
     assert receipt["validation_errors"]
-    assert validate_one_stream_receipt(receipt, signing_key=b"test-key")
+    assert validate_one_stream_receipt(
+        receipt,
+        readiness_verify_key=Ed25519PrivateKey.generate().public_key(),
+    )
 
 
 def test_caller_injected_samples_never_satisfy_executor_capture_gate() -> None:
@@ -113,7 +122,7 @@ def test_caller_injected_samples_never_satisfy_executor_capture_gate() -> None:
         expected_runtime_start_ticks="1",
         expected_host_binding="host",
         expected_challenge="challenge",
-        signing_key=b"runtime-key",
+        verify_key=Ed25519PrivateKey.generate().public_key().public_bytes_raw(),
     )
     metrics["external_gpu_samples"] = [{"gpu_utilization": 100}]
 
@@ -159,7 +168,7 @@ def test_readiness_rejects_fabricated_dict_without_executor_attestation() -> Non
         "errors": [],
         "recovery_steps": ["none"],
     }
-    receipt = build_one_stream_receipt(source, signing_key=b"readiness-key")
+    receipt = build_one_stream_receipt(source, readiness_signing_key=Ed25519PrivateKey.generate())
     assert receipt["status"] == "blocked"
     assert any("executor attestation" in error for error in receipt["validation_errors"])
 
@@ -175,10 +184,17 @@ def test_approved_manifest_is_required_for_qualifying_runtime(tmp_path: Path) ->
         "faults: {}\n",
         encoding="utf-8",
     )
-    loaded, errors = load_approved_runtime_manifest(manifest, profile="rtx3090")
+    _loaded, errors = load_approved_runtime_manifest(manifest, profile="rtx3090")
+    assert any("canonical path" in error for error in errors)
+
+
+def test_checked_in_manifest_is_the_only_qualifying_manifest() -> None:
+    loaded, errors = load_approved_runtime_manifest(
+        Path("configs/gpu-qualification-manifest.yaml"), profile="rtx3090"
+    )
     assert errors == []
     assert loaded is not None
-    assert loaded["runtime"]["identity"] == "gpu-runtime-v1"
+    assert loaded["runtime"]["identity"] == "tp-smoke-detect.gpu-runtime.v1"
 
 
 def test_dev_manifest_cannot_be_used_for_qualification(tmp_path: Path) -> None:
@@ -191,4 +207,14 @@ def test_dev_manifest_cannot_be_used_for_qualification(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     _loaded, errors = load_approved_runtime_manifest(manifest, profile="rtx3090")
-    assert any("qualifying" in error for error in errors)
+    assert any("canonical path" in error for error in errors)
+
+
+def test_ed25519_public_verifier_cannot_forge_or_sign_with_public_material() -> None:
+    private = Ed25519PrivateKey.generate()
+    public = private.public_key()
+    payload = {"status": "qualified", "profile": "rtx3090"}
+    signature = sign_ed25519(payload, private)
+
+    assert verify_ed25519(payload, signature, public)
+    assert not verify_ed25519({**payload, "profile": "other"}, signature, public)
